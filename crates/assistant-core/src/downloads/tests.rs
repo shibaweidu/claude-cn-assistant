@@ -1,4 +1,58 @@
 use super::*;
+#[tokio::test]
+async fn resumes_partial_download_with_range_and_if_range() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = b"complete installer fixture";
+    let (service, release, asset, mut task) = fixture(dir.path(), bytes);
+    let folder = dir.path().join("downloads").join(&release.tag);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(format!("{}.part", task.id)), &bytes[..5]).unwrap();
+    task.etag = Some("\"stable\"".into());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/file", listener.local_addr().unwrap());
+    let body = bytes.to_vec();
+    let thread = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        let mut request = [0; 4096];
+        let n = socket.read(&mut request).unwrap();
+        let request = String::from_utf8_lossy(&request[..n]).to_lowercase();
+        assert!(request.contains("range: bytes=5-"));
+        assert!(request.contains("if-range: \"stable\""));
+        let header=format!("HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 5-{}/{}\r\nETag: \"stable\"\r\nConnection: close\r\n\r\n",body.len()-5,body.len()-1,body.len());
+        socket.write_all(header.as_bytes()).unwrap();
+        socket.write_all(&body[5..]).unwrap();
+    });
+    let result = service.transfer(task, release, asset, url, |_| {}).await;
+    thread.join().unwrap();
+    assert_eq!(result.stage, "ready");
+    assert_eq!(fs::read(result.path.unwrap()).unwrap(), bytes);
+}
+#[tokio::test]
+async fn ignored_range_restarts_instead_of_appending() {
+    let dir = tempfile::tempdir().unwrap();
+    let bytes = b"complete fixture";
+    let (service, release, asset, task) = fixture(dir.path(), bytes);
+    let folder = dir.path().join("downloads").join(&release.tag);
+    fs::create_dir_all(&folder).unwrap();
+    fs::write(folder.join(format!("{}.part", task.id)), b"wrong prefix").unwrap();
+    let result = service
+        .transfer(
+            task,
+            release,
+            asset,
+            server(bytes, Some(bytes.len())),
+            |_| {},
+        )
+        .await;
+    assert_eq!(result.stage, "ready");
+    assert_eq!(fs::read(result.path.unwrap()).unwrap(), bytes);
+}
+#[test]
+fn rejects_wrong_resume_ranges() {
+    assert!(validate_range("bytes 5-9/10", 5, 10).is_ok());
+    assert!(validate_range("bytes 0-9/10", 5, 10).is_err());
+    assert!(validate_range("bytes 5-19/20", 5, 10).is_err());
+}
 #[test]
 fn mirror_identity_and_channel_changes_are_validated() {
     let config = ChannelConfig::default();
@@ -146,7 +200,11 @@ async fn hash_mismatch_and_interrupted_body_never_become_ready() {
         let files: Vec<_> = fs::read_dir(dir.path().join("downloads/claude-app-v1.2.3"))
             .unwrap()
             .collect();
-        assert!(files.is_empty());
+        if interrupted {
+            assert_eq!(files.len(), 1);
+        } else {
+            assert!(files.is_empty());
+        }
     }
 }
 #[tokio::test]

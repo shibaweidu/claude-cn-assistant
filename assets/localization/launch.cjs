@@ -29,20 +29,20 @@ async function main(){
     let id=0;
     const evaluate=expression=>new Promise((resolve,reject)=>{
       const current=++id;const timeout=setTimeout(()=>{ws.removeEventListener('message',onMessage);reject(new Error('注入超时'))},5000);
-      function onMessage(event){const value=JSON.parse(event.data);if(value.id!==current)return;clearTimeout(timeout);ws.removeEventListener('message',onMessage);if(value.error||value.result?.exceptionDetails)reject(new Error('受管副本注入失败'));else resolve(value.result?.result?.value)}
+      function onMessage(event){const value=JSON.parse(event.data);if(value.id!==current)return;clearTimeout(timeout);ws.removeEventListener('message',onMessage);if(value.error||value.result?.exceptionDetails)reject(new Error('受管副本注入失败：'+JSON.stringify(value.error||value.result?.exceptionDetails)));else resolve(value.result?.result?.value)}
       ws.addEventListener('message',onMessage);ws.send(JSON.stringify({id:current,method:'Runtime.evaluate',params:{expression,returnByValue:true,awaitPromise:true}}));
     });
-    const actual=await evaluate('require("node:fs").realpathSync(process.execPath).toLowerCase()');
+    const actual=await evaluate('process.getBuiltinModule("fs").realpathSync(process.execPath).toLowerCase()');
     if(actual!==expected)throw new Error('连接进程不是受管副本，已停止注入');verified=true;
-    if(!await evaluate(`require(${JSON.stringify(hook)});globalThis.__claudeCnHookInstalled===true`))throw new Error('汉化 hook 未就绪');
+    if(!await evaluate(`process.getBuiltinModule("module").createRequire(process.resourcesPath+"/app.asar/package.json")(${JSON.stringify(hook)});globalThis.__claudeCnHookInstalled===true`))throw new Error('汉化 hook 未就绪');
     let pages=0;for(let i=0;i<24;i++){pages=await evaluate('globalThis.__claudeCnPages||0');if(pages)break;await delay(500)}
     if(!pages)throw new Error('副本已启动，但未确认目标页面汉化注入；请检查 hook.log');
     // 在确认身份后关闭调试入口，随后断开。即使确认页面失败也会进入 finally。
     console.log('汉化启动注入已确认，页面数量：'+pages);
-    await evaluate('setTimeout(()=>require("node:inspector").close(),50);true').catch(()=>{});
+    await evaluate('setTimeout(()=>process.getBuiltinModule("inspector").close(),50);true').catch(()=>{});
     completed=true;
   } finally {
-    if(ws&&verified&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify({id:99999,method:'Runtime.evaluate',params:{expression:'setTimeout(()=>require("node:inspector").close(),30);true'}}));await delay(100)}
+    if(ws&&verified&&ws.readyState===WebSocket.OPEN){ws.send(JSON.stringify({id:99999,method:'Runtime.evaluate',params:{expression:'setTimeout(()=>process.getBuiltinModule("inspector").close(),30);true'}}));await delay(100)}
     ws?.close();
     if(!completed){try{child.kill()}catch{}}
   }

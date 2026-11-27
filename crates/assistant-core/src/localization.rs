@@ -363,6 +363,7 @@ impl Localizer {
             .try_lock()
             .map_err(|_| anyhow::anyhow!("汉化操作正在进行"))?;
         self.ensure_no_transaction()?;
+        self.refresh_runtime()?;
         let mut state = self.validate_copy(&self.root.join("managed"))?;
         ensure!(
             matches!(state.stage.as_str(), "prepared" | "launched"),

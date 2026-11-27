@@ -2,7 +2,7 @@ import {bridge, type DownloadState, type DownloadTask} from './bridge';
 import {InstallUI} from './install-view';
 const esc=(value:unknown)=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
 const bytes=(value:number)=>value>=1024*1024?`${(value/1024/1024).toFixed(1)} MB`:`${(value/1024).toFixed(1)} KB`;
-const stages:Record<string,string>={connecting:'正在连接',downloading:'正在下载',verifying:'正在校验 SHA256',committing:'正在保存',ready:'完整性校验通过',failed:'下载失败',cancelled:'已取消',unverified:'等待重新校验'};
+const stages:Record<string,string>={connecting:'正在连接',downloading:'正在下载',verifying:'正在校验 SHA256',committing:'正在保存',ready:'完整性校验通过',failed:'下载失败',cancelled:'已暂停',unverified:'等待重新校验'};
 const active=(task:DownloadTask|null)=>!!task&&['connecting','downloading','verifying','committing'].includes(task.stage);
 function compare(a:string,b:string):number|null {
   if(!/^\d+(\.\d+)*$/.test(a)||!/^\d+(\.\d+)*$/.test(b))return null;
@@ -19,7 +19,7 @@ export class DownloadUI {
   constructor(private changed:(progress?:boolean)=>void,private notify:(text:string)=>void,private auto:()=>boolean){this.install=new InstallUI(()=>this.changed(),notify)}
   async init(){
     try{
-      await bridge.onTask(task=>{const old=this.data.task;this.data.task=task;const progress=old?.id===task.id&&old?.stage===task.stage;this.changed(progress);if(!active(task))this.notify(task.stage==='ready'?'安装包已下载，SHA256 校验通过':task.error||'下载已取消');});
+      await bridge.onTask(task=>{const old=this.data.task;this.data.task=task;const progress=old?.id===task.id&&old?.stage===task.stage;this.changed(progress);if(!active(task))this.notify(task.stage==='ready'?'安装包已下载，SHA256 校验通过':task.error||'下载已暂停，进度已保留');});
       this.data=await bridge.downloads();this.initialized=true;this.changed();
       await this.install.init();
       if(this.auto())void this.check(false);
@@ -42,7 +42,7 @@ export class DownloadUI {
         // 任务可能在 invoke 返回前已产生进度或完成事件。
         if(this.data.task?.id!==task.id)this.data.task=task;
       }else if(name==='package-cancel'){
-        if(this.data.task){await bridge.cancel(this.data.task.id);this.notify('正在取消下载…')}
+        if(this.data.task){await bridge.cancel(this.data.task.id);this.notify('正在暂停下载…')}
       }else if(name==='package-verify'){this.data.task=await bridge.verify();}
       else if(name==='package-reveal'){await bridge.reveal();}
       else if(name==='release-page'){await bridge.openLink('release');}
@@ -58,7 +58,7 @@ export class DownloadUI {
       ${this.error||lastError?`<div class="notice" role="alert">${esc(this.error||lastError)}${retryAt>Date.now()/1000?`<br>下次可重试：${esc(new Date(retryAt*1000).toLocaleTimeString('zh-CN'))}`:''}<br><button class="text-button" data-native="release-page">打开镜像发布页</button></div>`:''}
       <div class="notice">下载渠道：${this.data.channel.accelerated?'公益镜像加速':'GitHub Releases'} <button class="text-button" data-native="package-channel" ${active(task)||this.checking||this.working?'disabled':''}>切换到${this.data.channel.accelerated?' GitHub 备用':'公益加速'}</button></div>
       <div class="platform-tabs" role="tablist" aria-label="下载操作系统">${[['windows','Windows'],['mac','macOS'],['linux','Linux']].map(([key,label])=>`<button role="tab" aria-selected="${platform===key}" data-platform="${key}">${label}</button>`).join('')}</div>
-      <section class="panel"><div class="download-product"><div class="product-icon" aria-hidden="true">↓</div><div><h2>Claude for ${platform==='windows'?'Windows':platform==='mac'?'macOS':'Linux'}</h2><p>${esc(selected?.name||'检查版本后获取对应安装包')}<br>${esc(status)}${release?` · ${esc(release.version)}`:''}</p></div><button class="primary-button" data-native="package-download" ${!selected||stale||active(task)||this.working||this.install.active()||this.install.busy?'disabled':''}>${active(task)?'正在处理…':'下载安装包'}</button></div>
+      <section class="panel"><div class="download-product"><div class="product-icon" aria-hidden="true">↓</div><div><h2>Claude for ${platform==='windows'?'Windows':platform==='mac'?'macOS':'Linux'}</h2><p>${esc(selected?.name||'检查版本后获取对应安装包')}<br>${esc(status)}${release?` · ${esc(release.version)}`:''}</p></div><button class="primary-button" data-native="package-download" ${!selected||stale||active(task)||this.working||this.install.active()||this.install.busy?'disabled':''}>${active(task)?'正在处理…':(task&&task.version===release?.version&&task.assetName===selected?.name&&['failed','cancelled'].includes(task.stage)&&task.downloaded>0?'继续下载':'下载安装包')}</button></div>
       <div class="download-info"><div><span>架构</span>${platform==='mac'?'<strong>Universal</strong>':`<select id="architecture" aria-label="处理器架构"><option value="x64" ${architecture==='x64'?'selected':''}>x64</option><option value="arm64" ${architecture==='arm64'?'selected':''}>ARM64</option></select>`}</div><div><span>安装包大小</span><strong>${selected?bytes(selected.size):'—'}</strong></div><div><span>最后成功检查</span><strong>${esc(checked)}</strong></div></div>
       ${stale?'<div class="notice">清单已超过 6 小时，请重新检查版本后下载。</div>':''}
       ${selected?`<div class="download-hash"><span>预期 SHA256</span><code>${esc(selected.sha256)}</code></div>`:''}</section>
@@ -69,7 +69,7 @@ export class DownloadUI {
   }
   taskView(task:DownloadTask){
     const percent=task.total?Math.min(100,task.downloaded/task.total*100):0;
-    return `<section class="panel task-live" aria-label="下载任务"><div class="panel-top"><h2>${esc(task.assetName)}</h2><span class="badge warm" data-task-stage>${esc(stages[task.stage]||task.stage)}</span></div><div class="details"><div class="operation-label"><span data-task-size>${bytes(task.downloaded)} / ${bytes(task.total)}</span><span data-task-percent>${percent.toFixed(1)}%</span></div><progress class="native-progress" value="${task.downloaded}" max="${task.total||1}" aria-label="下载字节进度"></progress><p class="task-error" role="alert">${esc(task.error||'')}</p>${task.path?`<p class="path-display task-path">${esc(task.path)}</p>`:''}<div class="task-actions">${active(task)?`<button class="subtle-button" data-native="package-cancel" ${!task.cancellable||this.working?'disabled':''}>取消下载</button>`:task.stage==='ready'?`<button class="subtle-button" data-native="package-reveal" ${this.working?'disabled':''}>打开所在目录</button>${task.assetName.endsWith('.msix')?`<button class="primary-button" data-native="install-prepare" ${this.install.active()||this.install.busy?'disabled':''}>${this.install.busy?'正在检查…':'检查并安装'}</button>`:''}`:task.stage==='unverified'?`<button class="subtle-button" data-native="package-verify" ${this.working?'disabled':''}>${this.working?'正在校验…':'重新验证文件'}</button>`:`<span>选择安装包后可重新下载。</span>`}</div></div></section>`;
+    return `<section class="panel task-live" aria-label="下载任务"><div class="panel-top"><h2>${esc(task.assetName)}</h2><span class="badge warm" data-task-stage>${esc(stages[task.stage]||task.stage)}</span></div><div class="details"><div class="operation-label"><span data-task-size>${bytes(task.downloaded)} / ${bytes(task.total)}</span><span data-task-percent>${percent.toFixed(1)}%</span></div><progress class="native-progress" value="${task.downloaded}" max="${task.total||1}" aria-label="下载字节进度"></progress><p class="task-error" role="alert">${esc(task.error||'')}</p>${task.path?`<p class="path-display task-path">${esc(task.path)}</p>`:''}<div class="task-actions">${active(task)?`<button class="subtle-button" data-native="package-cancel" ${!task.cancellable||this.working?'disabled':''}>暂停下载</button>`:task.stage==='ready'?`<button class="subtle-button" data-native="package-reveal" ${this.working?'disabled':''}>打开所在目录</button>${task.assetName.endsWith('.msix')?`<button class="primary-button" data-native="install-prepare" ${this.install.active()||this.install.busy?'disabled':''}>${this.install.busy?'正在检查…':'检查并安装'}</button>`:''}`:task.stage==='unverified'?`<button class="subtle-button" data-native="package-verify" ${this.working?'disabled':''}>${this.working?'正在校验…':'重新验证文件'}</button>`:`<span>进度已保留。选择相同版本安装包可继续下载。</span>`}</div></div></section>`;
   }
   banner(){const task=this.data.task;return active(task)?`<button class="task-banner" data-goto="downloads"><span>${esc(stages[task!.stage])} · ${esc(task!.assetName)}</span><span data-banner-size>${bytes(task!.downloaded)} / ${bytes(task!.total)}</span></button>`:this.install.banner()}
   updateProgress(){

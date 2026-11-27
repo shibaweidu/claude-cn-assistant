@@ -60,6 +60,28 @@ fn transaction_paths(root: &Path, tx: &Transaction) -> Result<(PathBuf, PathBuf)
     Ok((root.join(&tx.source), root.join(&tx.backup)))
 }
 impl Localizer {
+    pub(super) fn refresh_runtime(&self) -> Result<()> {
+        let dir = self.root.join("managed");
+        no_links(&dir)?;
+        let mut files = Vec::new();
+        collect(&dir, &dir, &mut files)?;
+        let receipt: LocalState = serde_json::from_slice(&fs::read(dir.join("cn-receipt.json"))?)?;
+        ensure!(
+            receipt.patch_version == 1
+                && digest(&dir.join("Claude.exe"))? == receipt.exe_hash
+                && digest(&dir.join("resources/app.asar"))? == receipt.app_hash
+                && digest(&dir.join("resources/ion-dist.asar"))? == receipt.ion_hash,
+            "副本关键文件变化，不能更新启动脚本"
+        );
+        for (name, bytes) in SCRIPTS {
+            let mut temp = tempfile::NamedTempFile::new_in(dir.join("cn-runtime"))?;
+            temp.write_all(bytes)?;
+            temp.as_file().sync_all()?;
+            temp.persist(dir.join("cn-runtime").join(name))
+                .map_err(|e| e.error)?;
+        }
+        Ok(())
+    }
     fn transaction_path(&self) -> PathBuf {
         self.root.join("localization-transaction.json")
     }

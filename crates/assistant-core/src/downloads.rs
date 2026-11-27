@@ -105,6 +105,8 @@ pub struct Task {
     pub path: Option<PathBuf>,
     pub error: Option<String>,
     pub cancellable: bool,
+    #[serde(default)]
+    pub etag: Option<String>,
 }
 impl Task {
     pub fn active(&self) -> bool {
@@ -346,7 +348,7 @@ impl Downloads {
                 t.stage = "failed".into();
                 t.cancellable = false;
                 t.path = None;
-                t.error = Some("上次下载被中断，请重新下载；未完成文件不会作为安装包使用".into());
+                t.error = Some("上次下载被中断，部分文件已保留，选择同版本安装包可继续下载".into());
             }
             if t.stage == "ready" {
                 t.stage = "unverified".into();
@@ -587,8 +589,18 @@ impl Downloads {
             !current.as_ref().is_some_and(Task::active),
             "已有下载或校验任务正在进行"
         );
+        let previous = current.as_ref().filter(|old| {
+            old.version == release.version
+                && old.asset_name == asset.name
+                && old.sha256 == asset.sha256
+                && old.total == asset.size
+                && uuid::Uuid::parse_str(&old.id).is_ok()
+        });
+        let previous_id = previous.map(|old| old.id.clone());
+        let previous_etag = previous.and_then(|old| old.etag.clone());
         let task = Task {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: previous_id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
+            etag: previous_etag,
             stage: "connecting".into(),
             asset_name: asset.name.clone(),
             version: release.version.clone(),
@@ -624,7 +636,7 @@ impl Downloads {
             tokio::select! {
                 result=&mut future=>return Ok(result),
                 _=&mut deadline=>bail!("网络连续 30 秒没有响应，请重试"),
-                _=tokio::time::sleep(Duration::from_millis(80))=>ensure!(!self.cancel.load(Ordering::Acquire),"下载已取消"),
+                _=tokio::time::sleep(Duration::from_millis(80))=>ensure!(!self.cancel.load(Ordering::Acquire),"下载已暂停，已保留进度"),
             }
         }
     }
@@ -663,12 +675,27 @@ impl Downloads {
         let result = async {
             ensure!(valid_tag(&release.tag), "版本标签无效");
             fs::create_dir_all(&dir)?;
+            let mut offset = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+            if offset >= asset.size {
+                offset = 0;
+            }
+            task.downloaded = offset;
+            self.publish(&task, &notify);
             let mut response = {
                 let mut attempt = 0;
                 loop {
-                    let result = self
-                        .cancellable(self.channel_client()?.get(&url).send())
-                        .await?;
+                    let mut request = self
+                        .channel_client()?
+                        .get(&url)
+                        .header(reqwest::header::ACCEPT_ENCODING, "identity");
+                    if offset > 0 {
+                        request =
+                            request.header(reqwest::header::RANGE, format!("bytes={offset}-"));
+                        if let Some(etag) = &task.etag {
+                            request = request.header(reqwest::header::IF_RANGE, etag);
+                        }
+                    }
+                    let result = self.cancellable(request.send()).await?;
                     match result {
                         Ok(response) => break response,
                         Err(_) if attempt < 2 => {
@@ -683,18 +710,59 @@ impl Downloads {
                 }
             };
             self.check_response(&response)?;
-            if let Some(length) = response.content_length() {
-                ensure!(length == asset.size, "服务器文件大小与发布清单不一致");
+            if offset > 0 && response.status() == StatusCode::OK {
+                offset = 0;
+                task.downloaded = 0;
             }
+            if response.status() == StatusCode::PARTIAL_CONTENT {
+                let range = response
+                    .headers()
+                    .get(reqwest::header::CONTENT_RANGE)
+                    .and_then(|h| h.to_str().ok())
+                    .context("续传响应缺少 Content-Range")?;
+                validate_range(range, offset, asset.size)?;
+                if let Some(old) = &task.etag {
+                    if let Some(new) = response
+                        .headers()
+                        .get(reqwest::header::ETAG)
+                        .and_then(|h| h.to_str().ok())
+                    {
+                        ensure!(old == new, "安装包 ETag 已变化，请重新下载");
+                    }
+                }
+            } else {
+                ensure!(
+                    offset == 0 && response.status() == StatusCode::OK,
+                    "服务器不支持本次续传，请重新检查版本"
+                );
+            }
+            if let Some(length) = response.content_length() {
+                ensure!(
+                    length == asset.size - offset,
+                    "服务器文件大小与发布清单不一致"
+                );
+            }
+            task.etag = response
+                .headers()
+                .get(reqwest::header::ETAG)
+                .and_then(|h| h.to_str().ok())
+                .filter(|s| !s.starts_with("W/"))
+                .map(str::to_owned);
+            atomic_json(&self.root.join("download-task.json"), &task)?;
             let mut file = fs::OpenOptions::new()
                 .write(true)
-                .create_new(true)
+                .create(true)
+                .truncate(offset == 0)
+                .append(offset > 0)
                 .open(&part)?;
             task.stage = "downloading".into();
             self.publish(&task, &notify);
             let mut last = std::time::Instant::now();
             while let Some(bytes) = self.cancellable(response.chunk()).await?? {
-                ensure!(!self.cancel.load(Ordering::Acquire), "下载已取消");
+                ensure!(
+                    !self.cancel.load(Ordering::Acquire),
+                    "下载已暂停，已保留进度"
+                );
                 ensure!(
                     task.downloaded + bytes.len() as u64 <= asset.size,
                     "下载数据超过预期大小"
@@ -716,14 +784,17 @@ impl Downloads {
             task.stage = "verifying".into();
             self.publish(&task, &notify);
             let hash = hash_file(&part, &self.cancel)?;
-            ensure!(
-                hash == asset.sha256,
-                "SHA256 校验失败，文件不能用于安装，请重新下载"
-            );
+            if hash != asset.sha256 {
+                fs::remove_file(&part)?;
+                bail!("SHA256 校验失败，已丢弃损坏的部分文件，请重新下载");
+            }
             {
                 // 与 cancel 使用同一把锁，避免接受取消后仍提交文件。
                 let mut current = self.task.lock().unwrap();
-                ensure!(!self.cancel.load(Ordering::Acquire), "下载已取消");
+                ensure!(
+                    !self.cancel.load(Ordering::Acquire),
+                    "下载已暂停，已保留进度"
+                );
                 task.stage = "committing".into();
                 task.cancellable = false;
                 *current = Some(task.clone());
@@ -748,8 +819,11 @@ impl Downloads {
             task.error = Some(format!("{error:#}"));
         }
         task.cancellable = false;
+        // 失败、暂停和退出后保留部分文件；下一次下载同版本同哈希时复用。
         if part.is_file() {
-            let _ = fs::remove_file(&part);
+            task.downloaded = fs::metadata(&part)
+                .map(|m| m.len())
+                .unwrap_or(task.downloaded);
         }
         if let Err(error) = atomic_json(&self.root.join("download-task.json"), &task) {
             task.stage = "failed".into();
@@ -804,7 +878,7 @@ fn hash_file(path: &Path, cancel: &AtomicBool) -> Result<String> {
     let mut hash = Sha256::new();
     let mut bytes = vec![0u8; 1024 * 1024];
     loop {
-        ensure!(!cancel.load(Ordering::Acquire), "下载已取消");
+        ensure!(!cancel.load(Ordering::Acquire), "下载已暂停，已保留进度");
         let read = file.read(&mut bytes)?;
         if read == 0 {
             break;
@@ -816,3 +890,19 @@ fn hash_file(path: &Path, cancel: &AtomicBool) -> Result<String> {
 
 #[cfg(test)]
 mod tests;
+
+fn validate_range(value: &str, offset: u64, total: u64) -> Result<()> {
+    let value = value
+        .strip_prefix("bytes ")
+        .context("Content-Range 单位无效")?;
+    let (interval, size) = value.split_once('/').context("Content-Range 格式无效")?;
+    let (start, end) = interval.split_once('-').context("Content-Range 区间无效")?;
+    let start: u64 = start.parse()?;
+    let end: u64 = end.parse()?;
+    let size: u64 = size.parse()?;
+    ensure!(
+        start == offset && size == total && end >= start && end == total - 1,
+        "续传范围与本地文件不一致"
+    );
+    Ok(())
+}

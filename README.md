@@ -1,5 +1,9 @@
 # Claude 中文助手
 
+最新开发版支持暂停与断点续传：相同版本、大小和 SHA256 的任务复用部分文件，携带 Range 和可用的强 ETag/If-Range；服务器返回完整响应时从头覆盖，不会错误拼接。完成后校验完整 SHA256。旧版已删除的部分文件无法恢复。
+
+启动修复：适配没有全局 require 的 Claude 主进程。已制作副本的关键文件校验通过后可原地更新汉化启动脚本，无需为本次修复重新制作完整副本。
+
 开源仓库：[shibaweidu/claude-cn-assistant](https://github.com/shibaweidu/claude-cn-assistant)。免费、非商业的 Claude 桌面汉化与镜像下载助手。
 
 下载默认使用 Wangnov/claude-app-mirror 公益加速入口，携带指向本仓库的实名 User-Agent；下载页可手动切换 GitHub Releases 备用渠道。渠道切换会清空版本缓存，需要重新检查版本；不会中途切换正在下载的任务。加速入口仅提供最新版，清单/校验和或安装包哈希不一致时停止，不安装混合版本文件。实际速度取决于镜像路由和本地网络，不保证加速幅度。
