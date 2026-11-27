@@ -22,6 +22,7 @@ export class DownloadUI {
       await bridge.onTask(task=>{const old=this.data.task;this.data.task=task;const progress=old?.id===task.id&&old?.stage===task.stage;this.changed(progress);if(!active(task))this.notify(task.stage==='ready'?'安装包已下载，正在准备安装检查':task.error||'下载已暂停，进度已保留');if(task.stage==='ready'&&(old?.id!==task.id||old.stage!=='ready'))void this.continueInstall(task);});
       this.data=await bridge.downloads();this.initialized=true;this.changed();
       await this.install.init();
+      if(this.data.task?.stage==='unverified'&&this.data.task.assetName.endsWith('.msix'))this.data.task=await bridge.verify();
       if(this.data.task?.stage==='ready'){
         if(!this.install.state?.stage||['stopped','failed'].includes(this.install.state.stage))void this.continueInstall(this.data.task);
         else if(this.install.state.stage==='ready')void this.install.action('install-confirm');
@@ -51,7 +52,7 @@ export class DownloadUI {
         if(this.data.task?.id!==task.id)this.data.task=task;
       }else if(name==='package-cancel'){
         if(this.data.task){await bridge.cancel(this.data.task.id);this.notify('正在暂停下载…')}
-      }else if(name==='package-verify'){this.data.task=await bridge.verify();}
+      }else if(name==='package-verify'){this.data.task=await bridge.verify();if(this.data.task.stage==='ready')void this.continueInstall(this.data.task);}
       else if(name==='package-reveal'){await bridge.reveal();}
       else if(name==='release-page'){await bridge.openLink('release');}
     }catch(e){this.error=String(e)}finally{this.working=false;this.changed()}
