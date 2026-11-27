@@ -151,7 +151,7 @@ pub fn validate_package(
     );
     ensure!(
         !env.running,
-        "Claude 正在运行，请先正常退出 Claude，再重新检查；助手不会强制关闭进程"
+        "Claude 正在运行，请确认强制退出后继续安装，或正常退出后重试"
     );
     for package in &env.packages {
         ensure!(
@@ -246,7 +246,9 @@ impl Installer {
                 "锁定后安装包完整性校验失败"
             );
             let info = inspect_package(path)?;
-            let env = environment()?;
+            let mut env = environment()?;
+            // 检查包时允许客户端运行，真正安装前仍必须退出。
+            env.running = false;
             validate_package(&info, &task.version, arch, &env)?;
             self.check_standard_versions(&info.version)?;
             state.task_id = task.id;
@@ -264,7 +266,12 @@ impl Installer {
         state.checked_at = now();
         self.set(state)
     }
-    pub fn launch(&self, downloads: &Downloads, id: &str) -> Result<InstallState> {
+    pub fn launch(
+        &self,
+        downloads: &Downloads,
+        id: &str,
+        force_exit: bool,
+    ) -> Result<InstallState> {
         let mut state = self.state();
         ensure!(
             state.id == id && state.stage == "ready",
@@ -285,7 +292,9 @@ impl Installer {
                 "锁定后安装包完整性校验失败"
             );
             let info = inspect_package(path)?;
-            let env = environment()?;
+            let mut env = environment()?;
+            let was_running = env.running;
+            env.running = false;
             let expected = state.info.as_ref().context("没有安装包信息")?;
             validate_package(&info, &task.version, &expected.architecture, &env)?;
             self.check_standard_versions(&info.version)?;
@@ -299,6 +308,28 @@ impl Installer {
                 state.message = "本机已注册该版本或更高版本，无需重复安装。".into();
                 return Ok(());
             }
+            ensure!(
+                !was_running || force_exit,
+                "Claude 正在运行，请确认强制退出后继续安装"
+            );
+            if force_exit {
+                // 仅在本次安装明确授权且包重新验证通过后关闭 Claude。
+                probe::<bool>(r#"
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$ErrorActionPreference='Stop'
+try {
+    $processes = @(Get-Process | Where-Object { $_.ProcessName -eq 'Claude' })
+    foreach ($process in $processes) {
+        try { Stop-Process -InputObject $process -Force -ErrorAction Stop }
+        catch { if (-not $process.HasExited) { throw } }
+    }
+    foreach ($process in $processes) { if (-not $process.WaitForExit(5000)) { throw 'Claude 退出超时' } }
+    @{ok=$true;data=$true}|ConvertTo-Json -Compress
+} catch { @{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress }
+"#, None).context("无法退出 Claude，请手动关闭后重试")?;
+            }
+            let final_env = environment()?;
+            validate_package(&info, &task.version, &expected.architecture, &final_env)?;
             // ShellExecute 通过文件关联交给 Windows 应用安装程序，不拼接文件路径。
             probe::<bool>(r#"[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference='Stop';try {Start-Process -FilePath $env:CLAUDE_CN_PROBE_PATH -ErrorAction Stop;@{ok=$true;data=$true}|ConvertTo-Json -Compress}catch{@{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress}"#,Some(path)).context("无法打开 Windows 应用安装程序，请检查 MSIX 文件关联或安装策略")?;
             state.stage = "awaitingInstaller".into();

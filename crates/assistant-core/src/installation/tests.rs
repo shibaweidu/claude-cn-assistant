@@ -126,5 +126,5 @@ fn unverified_or_other_platform_file_cannot_be_installed() {
     let state = service.prepare(&downloads, &id).unwrap();
     assert_eq!(state.stage, "failed");
     assert!(state.info.is_none());
-    assert!(service.launch(&downloads, &id).is_err());
+    assert!(service.launch(&downloads, &id, false).is_err());
 }

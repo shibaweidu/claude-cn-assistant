@@ -12,26 +12,35 @@ export class InstallUI {
     window.setInterval(()=>{if(this.state?.stage==='awaitingInstaller'&&!this.busy)void this.action('install-recheck')},15000);
   }
   active(){return !!this.state&&['checking','ready','launching','awaitingInstaller'].includes(this.state.stage)}
-  async action(name:string){
+  async action(name:string,forceExit=false){
     if(this.busy)return;
-    if(name==='install-confirm'){this.confirm();return}
+    if(name==='install-confirm'){await this.confirm();return}
     this.busy=true;this.error='';this.changed();
     const previousStage=this.state?.stage;
     try{
       if(name==='install-prepare')this.state=await bridge.prepareInstall();
-      else if(name==='install-launch'&&this.state)this.state=await bridge.launchInstall(this.state.id);
+      else if(name==='install-launch'&&this.state)this.state=await bridge.launchInstall(this.state.id,forceExit);
       else if(name==='install-recheck')this.state=await bridge.recheckInstall();
       else if(name==='install-stop')this.state=await bridge.stopInstall();
       if(this.state?.stage==='installed'&&previousStage!=='installed'){this.notify('已通过 Windows 包注册信息确认安装版本');window.dispatchEvent(new Event('installation-confirmed'))}
     }catch(error){this.error=String(error)}finally{this.busy=false;this.changed()}
+    if(name==='install-prepare'&&this.state?.stage==='ready')await this.confirm();
   }
-  confirm(){
+  async confirm(){
     if(this.state?.stage!=='ready'||!this.state.info)return;
-    const info=this.state.info;
+    const installId=this.state.id;
+    let running=false;
+    this.busy=true;this.changed();
+    try{const runtime=await bridge.localizationRuntime();running=runtime.managedRunning||runtime.originalRunning||runtime.unknownRunning}
+    catch(error){this.error='无法检测 Claude 运行状态：'+String(error);return}
+    finally{this.busy=false;this.changed()}
+    if(this.state?.id!==installId||this.state.stage!=='ready')return;
+    const info=this.state.info!;
     const dialog=document.querySelector<HTMLDialogElement>('#modal')!;
-    document.querySelector('#modal-content')!.innerHTML=`<h2>打开 Windows 安装程序？</h2><p>Claude ${esc(info.version)} · ${esc(info.architecture)}<br>发布者：Anthropic, PBC<br>已通过 SHA256、Windows 签名与身份检查。下一步将打开系统安装器，由你完成安装。助手不会自动提权或强制退出 Claude。已有普通安装会保留，不会自动卸载或迁移其数据。</p><div class="modal-actions"><button class="subtle-button" id="cancel-install">返回</button><button class="primary-button" id="confirm-install">打开系统安装器</button></div>`;
+    if(dialog.open){this.notify('安装检查已完成，请在下载与更新页确认安装');return}
+    document.querySelector('#modal-content')!.innerHTML=`<h2>${running?'强制退出 Claude 并更新？':'安装更新已准备好'}</h2><p>Claude ${esc(info.version)} · ${esc(info.architecture)}<br>发布者：Anthropic, PBC<br>已通过 SHA256、Windows 签名与身份检查。${running?'Claude 正在运行（包括中文副本）。继续会强制结束所有 Claude 进程，正在生成的内容或未保存的操作可能丢失。请先保存。':''}确认后将打开 Windows 安装器，由你完成安装。已有普通安装会保留，不会自动卸载或迁移其数据。</p><div class="modal-actions"><button class="subtle-button" id="cancel-install">返回</button><button class="primary-button" id="confirm-install">${running?'强制退出并继续更新':'继续安装更新'}</button></div>`;
     document.querySelector('#cancel-install')!.addEventListener('click',()=>dialog.close());
-    document.querySelector('#confirm-install')!.addEventListener('click',()=>{dialog.close();void this.action('install-launch')});
+    document.querySelector('#confirm-install')!.addEventListener('click',()=>{dialog.close();void this.action('install-launch',running)});
     dialog.showModal();
   }
   view(){

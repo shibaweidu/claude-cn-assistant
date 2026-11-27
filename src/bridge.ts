@@ -31,7 +31,7 @@ export const bridge = {
   onTask:(callback:(task:DownloadTask)=>void)=>listen<DownloadTask>('download-task',event=>callback(event.payload)),
   installation:()=>invoke<InstallState>('get_install_state'),
   prepareInstall:()=>invoke<InstallState>('prepare_install'),
-  launchInstall:(installId:string)=>invoke<InstallState>('launch_install',{installId}),
+  launchInstall:(installId:string,forceExit=false)=>invoke<InstallState>('launch_install',{installId,forceExit}),
   recheckInstall:()=>invoke<InstallState>('recheck_install'),
   stopInstall:()=>invoke<InstallState>('stop_install_wait'),
   localizationRuntime:()=>invoke<RuntimeState>('get_localization_runtime'),

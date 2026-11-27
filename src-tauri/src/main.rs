@@ -181,6 +181,7 @@ async fn prepare_install(
 #[tauri::command]
 async fn launch_install(
     install_id: String,
+    force_exit: bool,
     installer: tauri::State<'_, Arc<Installer>>,
     downloads: tauri::State<'_, Arc<Downloads>>,
 ) -> Result<InstallState, String> {
@@ -190,7 +191,9 @@ async fn launch_install(
         let _gate = INSTALL_GATE
             .try_lock()
             .map_err(|_| "安装或汉化任务正在进行，请稍候".to_string())?;
-        installer.launch(&downloads, &install_id).map_err(err)
+        installer
+            .launch(&downloads, &install_id, force_exit)
+            .map_err(err)
     })
     .await
     .map_err(err)?

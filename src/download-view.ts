@@ -19,12 +19,20 @@ export class DownloadUI {
   constructor(private changed:(progress?:boolean)=>void,private notify:(text:string)=>void,private auto:()=>boolean){this.install=new InstallUI(()=>this.changed(),notify)}
   async init(){
     try{
-      await bridge.onTask(task=>{const old=this.data.task;this.data.task=task;const progress=old?.id===task.id&&old?.stage===task.stage;this.changed(progress);if(!active(task))this.notify(task.stage==='ready'?'安装包已下载，SHA256 校验通过':task.error||'下载已暂停，进度已保留');});
+      await bridge.onTask(task=>{const old=this.data.task;this.data.task=task;const progress=old?.id===task.id&&old?.stage===task.stage;this.changed(progress);if(!active(task))this.notify(task.stage==='ready'?'安装包已下载，正在准备安装检查':task.error||'下载已暂停，进度已保留');if(task.stage==='ready'&&(old?.id!==task.id||old.stage!=='ready'))void this.continueInstall(task);});
       this.data=await bridge.downloads();this.initialized=true;this.changed();
       await this.install.init();
+      if(this.data.task?.stage==='ready'){
+        if(!this.install.state?.stage||['stopped','failed'].includes(this.install.state.stage))void this.continueInstall(this.data.task);
+        else if(this.install.state.stage==='ready')void this.install.action('install-confirm');
+      }
       if(this.auto())void this.check(false);
       window.setInterval(()=>{if(this.auto())void this.check(false)},6*3600*1000);
     }catch(e){this.error=String(e);this.changed();}
+  }
+  async continueInstall(task:DownloadTask){
+    if(!task.assetName.endsWith('.msix')||this.install.active()||this.install.busy)return;
+    await this.install.action('install-prepare');
   }
   async check(manual=true){
     if(this.checking)return;this.checking=true;this.error='';this.changed();
