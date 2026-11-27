@@ -7,7 +7,7 @@ export interface Snapshot {settings:Settings;installations:Installation[];select
 export interface Asset {platform:string;architecture:string;name:string;version:string;size:number;sha256:string}
 export interface Release {version:string;tag:string;checkedAt:number;assets:Asset[]}
 export interface DownloadTask {id:string;stage:string;assetName:string;version:string;downloaded:number;total:number;sha256:string;path:string|null;error:string|null;cancellable:boolean}
-export interface DownloadState {release:Release|null;task:DownloadTask|null;lastError:string|null;retryAt:number;stale:boolean}
+export interface DownloadState {channel:{accelerated:boolean;repository:string};release:Release|null;task:DownloadTask|null;lastError:string|null;retryAt:number;stale:boolean}
 export interface PackageInfo {name:string;publisher:string;version:string;architecture:string;signatureStatus:string;signerMatches:boolean}
 export interface InstallState {id:string;stage:string;taskId:string;info:PackageInfo|null;message:string;startedAt:number;checkedAt:number;needsRebuild:boolean}
 export interface LocalState {stage:string;message:string;copied:number;total:number;sourceVersion:string;sourcePath:string|null;managedExe:string|null;backup:string|null;patchVersion:number}
@@ -20,6 +20,7 @@ export const bridge = {
   launch:()=>invoke<void>('launch_official'),
   openData:()=>invoke<void>('open_data_directory'),
   openLink:(kind:'source'|'release')=>invoke<void>('open_project_link',{kind}),
+  channel:(accelerated:boolean)=>invoke<DownloadState>('configure_download_channel',{accelerated}),
   downloads:()=>invoke<DownloadState>('get_download_state'),
   checkRelease:(manual:boolean)=>invoke<DownloadState>('check_release',{manual}),
   download:(platform:string,architecture:string)=>invoke<DownloadTask>('start_download',{platform,architecture}),

@@ -1,5 +1,9 @@
 # Claude 中文助手
 
+开源仓库：[shibaweidu/claude-cn-assistant](https://github.com/shibaweidu/claude-cn-assistant)。免费、非商业的 Claude 桌面汉化与镜像下载助手。
+
+下载默认使用 Wangnov/claude-app-mirror 公益加速入口，携带指向本仓库的实名 User-Agent；下载页可手动切换 GitHub Releases 备用渠道。渠道切换会清空版本缓存，需要重新检查版本；不会中途切换正在下载的任务。加速入口仅提供最新版，校验和不一致时停止，不安装混合版本文件。
+
 苹果桌面应用风格的 Claude 下载、更新、汉化与恢复助手。暖白、陶土橙色系。已接入 Windows 桌面工程、安装检测、镜像下载、汉化与副本恢复，完整路线见 DEVELOPMENT_PLAN.md。
 
 ## 启动

@@ -6,6 +6,18 @@ use assistant_core::localization::{LocalState, Localizer};
 use assistant_core::{Settings, Snapshot};
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
+#[tauri::command]
+fn configure_download_channel(
+    accelerated: bool,
+    downloads: tauri::State<'_, Arc<Downloads>>,
+) -> Result<DownloadState, String> {
+    downloads
+        .configure_channel(assistant_core::downloads::ChannelConfig {
+            accelerated,
+            repository: "https://github.com/shibaweidu/claude-cn-assistant".into(),
+        })
+        .map_err(err)
+}
 static SETTINGS_LOCK: Mutex<()> = Mutex::new(());
 static INSTALL_GATE: Mutex<()> = Mutex::new(());
 #[tauri::command]
@@ -364,6 +376,7 @@ fn main() {
             open_data_directory,
             open_project_link,
             get_download_state,
+            configure_download_channel,
             check_release,
             start_download,
             cancel_download,

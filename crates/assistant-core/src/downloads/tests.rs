@@ -1,4 +1,34 @@
 use super::*;
+#[test]
+fn mirror_identity_and_channel_changes_are_validated() {
+    let config = ChannelConfig::default();
+    assert!(config
+        .user_agent()
+        .unwrap()
+        .contains("https://github.com/shibaweidu/claude-cn-assistant"));
+    assert!(ChannelConfig {
+        accelerated: true,
+        repository: REPO.into()
+    }
+    .user_agent()
+    .is_err());
+    assert!(ChannelConfig {
+        accelerated: true,
+        repository: "https://github.com/owner/repo?token=secret".into()
+    }
+    .user_agent()
+    .is_err());
+    let dir = tempfile::tempdir().unwrap();
+    let service = Downloads::new(dir.path().into()).unwrap();
+    let state = service
+        .configure_channel(ChannelConfig {
+            accelerated: false,
+            ..config
+        })
+        .unwrap();
+    assert!(!state.channel.accelerated);
+    assert!(state.release.is_none());
+}
 use std::net::TcpListener;
 const MANIFEST: &[u8] = include_bytes!("../../../../tests/fixtures/mirror-manifest-v2.json");
 const CHECKSUMS: &str = include_str!("../../../../tests/fixtures/SHA256SUMS.txt");
@@ -30,6 +60,7 @@ fn semantic_version_comparison() {
 }
 fn fixture(root: &Path, bytes: &[u8]) -> (Downloads, Release, Asset, Task) {
     let service = Downloads::new(root.to_path_buf()).unwrap();
+    service.channel.lock().unwrap().accelerated = false;
     let asset = Asset {
         platform: "windows".into(),
         architecture: "x64".into(),
@@ -39,7 +70,7 @@ fn fixture(root: &Path, bytes: &[u8]) -> (Downloads, Release, Asset, Task) {
         sha256: format!("{:x}", Sha256::digest(bytes)),
     };
     let release = Release {
-        accelerated:false,
+        accelerated: false,
         version: "1.2.3".into(),
         tag: "claude-app-v1.2.3".into(),
         checked_at: now(),

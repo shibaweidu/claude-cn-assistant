@@ -16,18 +16,50 @@ use std::{
 };
 
 const REPO: &str = "https://github.com/Wangnov/claude-app-mirror";
-const MIRROR:&str="https://claudeapp.agentsmirror.com";
-#[derive(Clone,Debug,Default,Serialize,Deserialize)]
-#[serde(rename_all="camelCase")]
-pub struct ChannelConfig {pub accelerated:bool,pub repository:String}
+const MIRROR: &str = "https://claudeapp.agentsmirror.com";
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChannelConfig {
+    pub accelerated: bool,
+    pub repository: String,
+}
+impl Default for ChannelConfig {
+    fn default() -> Self {
+        Self {
+            accelerated: true,
+            repository: "https://github.com/shibaweidu/claude-cn-assistant".into(),
+        }
+    }
+}
 impl ChannelConfig {
-    fn user_agent(&self)->Result<String>{
-        let url=Url::parse(self.repository.trim()).context("请输入真实公开仓库地址")?;
-        ensure!(url.scheme()=="https"&&matches!(url.host_str(),Some("github.com"|"gitlab.com"))&&url.username().is_empty()&&url.password().is_none()&&url.query().is_none()&&url.fragment().is_none(),"仓库地址必须是 GitHub 或 GitLab 的 HTTPS 项目地址");
-        let parts:Vec<_>=url.path().trim_matches('/').split('/').collect();
-        ensure!(parts.len()>=2&&parts.iter().all(|s|!s.is_empty()&&s.bytes().all(|b|b.is_ascii_alphanumeric()||b"._-".contains(&b)))&&self.repository.len()<180,"请填写完整公开仓库地址");
-        ensure!(url.as_str().trim_end_matches('/')!=REPO,"请填写本助手真实仓库，不能使用镜像项目仓库冒充客户端");
-        Ok(format!("ClaudeCnAssistant/0.1.0 (+{}; open-source-noncommercial)",url.as_str().trim_end_matches('/')))
+    fn user_agent(&self) -> Result<String> {
+        let url = Url::parse(self.repository.trim()).context("请输入真实公开仓库地址")?;
+        ensure!(
+            url.scheme() == "https"
+                && matches!(url.host_str(), Some("github.com" | "gitlab.com"))
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none(),
+            "仓库地址必须是 GitHub 或 GitLab 的 HTTPS 项目地址"
+        );
+        let parts: Vec<_> = url.path().trim_matches('/').split('/').collect();
+        ensure!(
+            parts.len() >= 2
+                && parts.iter().all(|s| !s.is_empty()
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b)))
+                && self.repository.len() < 180,
+            "请填写完整公开仓库地址"
+        );
+        ensure!(
+            url.as_str().trim_end_matches('/') != REPO,
+            "请填写本助手真实仓库，不能使用镜像项目仓库冒充客户端"
+        );
+        Ok(format!(
+            "ClaudeCnAssistant/0.1.0 (+{}; open-source-noncommercial)",
+            url.as_str().trim_end_matches('/')
+        ))
     }
 }
 const CACHE_TTL: u64 = 6 * 3600;
@@ -54,7 +86,7 @@ pub struct Asset {
 #[serde(rename_all = "camelCase")]
 pub struct Release {
     #[serde(default)]
-    pub accelerated:bool,
+    pub accelerated: bool,
     pub version: String,
     pub tag: String,
     pub checked_at: u64,
@@ -85,7 +117,7 @@ impl Task {
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadState {
-    pub channel:ChannelConfig,
+    pub channel: ChannelConfig,
     pub release: Option<Release>,
     pub task: Option<Task>,
     pub last_error: Option<String>,
@@ -101,7 +133,7 @@ struct Cache {
     last_error: Option<String>,
 }
 pub struct Downloads {
-    channel:Mutex<ChannelConfig>,
+    channel: Mutex<ChannelConfig>,
     root: PathBuf,
     client: Client,
     cache: Mutex<Cache>,
@@ -136,16 +168,31 @@ fn client() -> Result<Client> {
         }))
         .build()?)
 }
-fn accelerated_client(config:&ChannelConfig)->Result<Client>{
-    Ok(Client::builder().user_agent(config.user_agent()?).connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(1800))
-        .redirect(reqwest::redirect::Policy::custom(|attempt|{
-            let url=attempt.url();
+fn accelerated_client(config: &ChannelConfig) -> Result<Client> {
+    Ok(Client::builder()
+        .user_agent(config.user_agent()?)
+        .connect_timeout(Duration::from_secs(15))
+        .timeout(Duration::from_secs(1800))
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            let url = attempt.url();
             // 存储节点由公开路由动态选择，不自行拼接底层存储地址。
-            let public_host=url.domain().is_some_and(|host|host.contains('.')&&!host.ends_with(".localhost")&&!host.ends_with(".local"));
-            if attempt.previous().len()>=8{attempt.error("重定向过多")}
-            else if url.scheme()=="https"&&url.username().is_empty()&&url.password().is_none()&&public_host&&(url.port().is_none()||url.port()==Some(443)){attempt.follow()}
-            else{attempt.error("镜像返回了不允许的重定向地址")}
-        })).build()?)
+            let public_host = url.domain().is_some_and(|host| {
+                host.contains('.') && !host.ends_with(".localhost") && !host.ends_with(".local")
+            });
+            if attempt.previous().len() >= 8 {
+                attempt.error("重定向过多")
+            } else if url.scheme() == "https"
+                && url.username().is_empty()
+                && url.password().is_none()
+                && public_host
+                && (url.port().is_none() || url.port() == Some(443))
+            {
+                attempt.follow()
+            } else {
+                attempt.error("镜像返回了不允许的重定向地址")
+            }
+        }))
+        .build()?)
 }
 fn atomic_json(path: &Path, value: &impl Serialize) -> Result<()> {
     let parent = path.parent().context("数据目录无效")?;
@@ -277,7 +324,7 @@ pub fn parse_release(tag: &str, manifest: &[u8], checksums: &str) -> Result<Rele
         });
     }
     Ok(Release {
-        accelerated:false,
+        accelerated: false,
         version: version.into(),
         tag: tag.into(),
         checked_at: now(),
@@ -287,7 +334,7 @@ pub fn parse_release(tag: &str, manifest: &[u8], checksums: &str) -> Result<Rele
 impl Downloads {
     pub fn new(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root)?;
-        let cache = fs::read(root.join("release-cache.json"))
+        let mut cache = fs::read(root.join("release-cache.json"))
             .ok()
             .and_then(|b| serde_json::from_slice::<Cache>(&b).ok())
             .unwrap_or_default();
@@ -307,8 +354,19 @@ impl Downloads {
                 t.cancellable = false;
             }
         }
+        let channel = fs::read(root.join("download-channel.json"))
+            .ok()
+            .and_then(|b| serde_json::from_slice::<ChannelConfig>(&b).ok())
+            .unwrap_or_default();
+        if cache
+            .release
+            .as_ref()
+            .is_some_and(|release| release.accelerated != channel.accelerated)
+        {
+            cache = Cache::default();
+        }
         Ok(Self {
-            channel:Mutex::new(fs::read(root.join("download-channel.json")).ok().and_then(|b|serde_json::from_slice::<ChannelConfig>(&b).ok()).unwrap_or_default()),
+            channel: Mutex::new(channel),
             root,
             client: client()?,
             cache: Mutex::new(cache),
@@ -320,7 +378,7 @@ impl Downloads {
     pub fn state(&self) -> DownloadState {
         let cache = self.cache.lock().unwrap();
         DownloadState {
-            channel:self.channel.lock().unwrap().clone(),
+            channel: self.channel.lock().unwrap().clone(),
             release: cache.release.clone(),
             task: self.task.lock().unwrap().clone(),
             last_error: cache.last_error.clone(),
@@ -331,14 +389,32 @@ impl Downloads {
                 .is_some_and(|r| now().saturating_sub(r.checked_at) >= CACHE_TTL),
         }
     }
-    pub fn configure_channel(&self,config:ChannelConfig)->Result<DownloadState>{
-        ensure!(!self.task.lock().unwrap().as_ref().is_some_and(Task::active),"请先取消或完成当前下载再切换渠道");
-        let _check=self.check_lock.try_lock().map_err(|_|anyhow::anyhow!("版本检查正在进行"))?;
-        if config.accelerated{config.user_agent()?;}
-        atomic_json(&self.root.join("download-channel.json"),&config)?;
-        *self.channel.lock().unwrap()=config;*self.cache.lock().unwrap()=Cache::default();self.save_cache()?;Ok(self.state())
+    pub fn configure_channel(&self, config: ChannelConfig) -> Result<DownloadState> {
+        ensure!(
+            !self.task.lock().unwrap().as_ref().is_some_and(Task::active),
+            "请先取消或完成当前下载再切换渠道"
+        );
+        let _check = self
+            .check_lock
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("版本检查正在进行"))?;
+        if config.accelerated {
+            config.user_agent()?;
+        }
+        atomic_json(&self.root.join("download-channel.json"), &config)?;
+        *self.channel.lock().unwrap() = config;
+        *self.cache.lock().unwrap() = Cache::default();
+        self.save_cache()?;
+        Ok(self.state())
     }
-    fn channel_client(&self)->Result<Client>{let config=self.channel.lock().unwrap().clone();if config.accelerated{accelerated_client(&config)}else{Ok(self.client.clone())}}
+    fn channel_client(&self) -> Result<Client> {
+        let config = self.channel.lock().unwrap().clone();
+        if config.accelerated {
+            accelerated_client(&config)
+        } else {
+            Ok(self.client.clone())
+        }
+    }
     fn save_cache(&self) -> Result<()> {
         atomic_json(
             &self.root.join("release-cache.json"),
@@ -413,11 +489,22 @@ impl Downloads {
         // 先固化最新标签，然后安装包、manifest、checksums 都从该标签获取。
         let result = async {
             if self.channel.lock().unwrap().accelerated {
-                let manifest=self.metadata(format!("{MIRROR}/latest/manifest")).await?;
-                let checksums=self.metadata(format!("{MIRROR}/latest/checksums")).await?;
-                let value:serde_json::Value=serde_json::from_slice(&manifest)?;
-                let tag=value.get("releaseTag").and_then(|v|v.as_str()).map(str::to_owned).unwrap_or_else(||format!("claude-app-v{}",value["version"].as_str().unwrap_or_default()));
-                let mut release=parse_release(&tag,&manifest,std::str::from_utf8(&checksums)?)?;release.accelerated=true;return Ok(release);
+                let manifest = self.metadata(format!("{MIRROR}/latest/manifest")).await?;
+                let checksums = self.metadata(format!("{MIRROR}/latest/checksums")).await?;
+                let value: serde_json::Value = serde_json::from_slice(&manifest)?;
+                let tag = value
+                    .get("releaseTag")
+                    .and_then(|v| v.as_str())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        format!(
+                            "claude-app-v{}",
+                            value["version"].as_str().unwrap_or_default()
+                        )
+                    });
+                let mut release = parse_release(&tag, &manifest, std::str::from_utf8(&checksums)?)?;
+                release.accelerated = true;
+                return Ok(release);
             }
             let response = tokio::time::timeout(
                 Duration::from_secs(30),
@@ -468,7 +555,10 @@ impl Downloads {
             .clone()
             .context("请先检查版本并获取经过校验的发布清单")?;
         ensure!(!self.state().stale, "版本清单已过期，请先检查更新");
-        ensure!(release.accelerated==self.channel.lock().unwrap().accelerated,"下载渠道已变化，请重新检查版本");
+        ensure!(
+            release.accelerated == self.channel.lock().unwrap().accelerated,
+            "下载渠道已变化，请重新检查版本"
+        );
         let asset = release
             .assets
             .iter()
@@ -546,9 +636,18 @@ impl Downloads {
         notify: impl Fn(Task),
     ) -> Task {
         let url = if release.accelerated {
-            let suffix=match (asset.platform.as_str(),asset.architecture.as_str()) {("windows","x64")=>"win-x64",("windows","arm64")=>"win-arm64",("macos","universal")=>"mac",("linux","x64")=>"linux-x64",("linux","arm64")=>"linux-arm64",_=>"invalid"};
+            let suffix = match (asset.platform.as_str(), asset.architecture.as_str()) {
+                ("windows", "x64") => "win-x64",
+                ("windows", "arm64") => "win-arm64",
+                ("macos", "universal") => "mac",
+                ("linux", "x64") => "linux-x64",
+                ("linux", "arm64") => "linux-arm64",
+                _ => "invalid",
+            };
             format!("{MIRROR}/latest/{suffix}")
-        }else{format!("{REPO}/releases/download/{}/{}", release.tag, asset.name)};
+        } else {
+            format!("{REPO}/releases/download/{}/{}", release.tag, asset.name)
+        };
         self.transfer(task, release, asset, url, notify).await
     }
     async fn transfer(
@@ -567,7 +666,9 @@ impl Downloads {
             let mut response = {
                 let mut attempt = 0;
                 loop {
-                    let result = self.cancellable(self.channel_client()?.get(&url).send()).await?;
+                    let result = self
+                        .cancellable(self.channel_client()?.get(&url).send())
+                        .await?;
                     match result {
                         Ok(response) => break response,
                         Err(_) if attempt < 2 => {

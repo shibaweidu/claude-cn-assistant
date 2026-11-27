@@ -11,7 +11,7 @@ function compare(a:string,b:string):number|null {
 }
 export class DownloadUI {
   install:InstallUI;
-  data:DownloadState={release:null,task:null,lastError:null,retryAt:0,stale:false};
+  data:DownloadState={channel:{accelerated:true,repository:'https://github.com/shibaweidu/claude-cn-assistant'},release:null,task:null,lastError:null,retryAt:0,stale:false};
   checking=false;
   working=false;
   error='';
@@ -36,6 +36,7 @@ export class DownloadUI {
     if(this.working)return;
     this.working=true;this.error='';this.changed();
     try{
+      if(name==='package-channel'){this.data=await bridge.channel(!this.data.channel.accelerated);return}
       if(name==='package-download'){
         const task=await bridge.download(platform==='mac'?'macos':platform,platform==='mac'?'universal':architecture);
         // 任务可能在 invoke 返回前已产生进度或完成事件。
@@ -55,6 +56,7 @@ export class DownloadUI {
     const checked=release?new Date(release.checkedAt*1000).toLocaleString('zh-CN'):'—';
     return `<div class="page-heading"><div><h1>下载与更新</h1><p>原版安装包，来自你指定的社区镜像。</p></div><button class="subtle-button" data-native="release-check" ${this.checking?'disabled':''}>${this.checking?'正在查询…':'检查版本'}</button></div>
       ${this.error||lastError?`<div class="notice" role="alert">${esc(this.error||lastError)}${retryAt>Date.now()/1000?`<br>下次可重试：${esc(new Date(retryAt*1000).toLocaleTimeString('zh-CN'))}`:''}<br><button class="text-button" data-native="release-page">打开镜像发布页</button></div>`:''}
+      <div class="notice">下载渠道：${this.data.channel.accelerated?'公益镜像加速':'GitHub Releases'} <button class="text-button" data-native="package-channel" ${active(task)||this.checking||this.working?'disabled':''}>切换到${this.data.channel.accelerated?' GitHub 备用':'公益加速'}</button></div>
       <div class="platform-tabs" role="tablist" aria-label="下载操作系统">${[['windows','Windows'],['mac','macOS'],['linux','Linux']].map(([key,label])=>`<button role="tab" aria-selected="${platform===key}" data-platform="${key}">${label}</button>`).join('')}</div>
       <section class="panel"><div class="download-product"><div class="product-icon" aria-hidden="true">↓</div><div><h2>Claude for ${platform==='windows'?'Windows':platform==='mac'?'macOS':'Linux'}</h2><p>${esc(selected?.name||'检查版本后获取对应安装包')}<br>${esc(status)}${release?` · ${esc(release.version)}`:''}</p></div><button class="primary-button" data-native="package-download" ${!selected||stale||active(task)||this.working||this.install.active()||this.install.busy?'disabled':''}>${active(task)?'正在处理…':'下载安装包'}</button></div>
       <div class="download-info"><div><span>架构</span>${platform==='mac'?'<strong>Universal</strong>':`<select id="architecture" aria-label="处理器架构"><option value="x64" ${architecture==='x64'?'selected':''}>x64</option><option value="arm64" ${architecture==='arm64'?'selected':''}>ARM64</option></select>`}</div><div><span>安装包大小</span><strong>${selected?bytes(selected.size):'—'}</strong></div><div><span>最后成功检查</span><strong>${esc(checked)}</strong></div></div>
