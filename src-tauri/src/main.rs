@@ -112,6 +112,7 @@ fn get_localization_state(localizer: tauri::State<'_, Arc<Localizer>>) -> LocalS
 }
 #[tauri::command]
 async fn prepare_localized_copy(
+    force_exit: bool,
     app: tauri::AppHandle,
     localizer: tauri::State<'_, Arc<Localizer>>,
     installer: tauri::State<'_, Arc<Installer>>,
@@ -126,7 +127,7 @@ async fn prepare_localized_copy(
             return Err("请先完成安装或结束等待".into());
         }
         localizer
-            .prepare(|state| {
+            .prepare(force_exit, |state| {
                 let _ = app.emit("localization-task", state);
             })
             .map_err(err)

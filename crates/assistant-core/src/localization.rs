@@ -259,7 +259,7 @@ ConvertTo-Json -InputObject $paths -Compress
         self.cancel.store(true, Ordering::Release);
         Ok(())
     }
-    pub fn prepare(&self, notify: impl Fn(LocalState)) -> Result<LocalState> {
+    pub fn prepare(&self, force_exit: bool, notify: impl Fn(LocalState)) -> Result<LocalState> {
         let _gate = self
             .gate
             .try_lock()
@@ -267,10 +267,6 @@ ConvertTo-Json -InputObject $paths -Compress
         self.cancel.store(false, Ordering::Release);
         self.ensure_no_transaction()?;
         let snapshot = crate::snapshot(&self.root)?;
-        ensure!(
-            !snapshot.running,
-            "请先正常退出 Claude，再制作中文版；助手不会强制关闭进程"
-        );
         let source = snapshot.selected.context("请先选择一个有效的原版安装")?;
         let exe = crate::validate_source(&source.path)?;
         let source_root = exe.parent().context("源目录无效")?;
@@ -278,6 +274,17 @@ ConvertTo-Json -InputObject $paths -Compress
         ensure!(
             !source_root.starts_with(&self.root.canonicalize()?),
             "不能把受管副本作为原版来源"
+        );
+        ensure!(
+            !snapshot.running || force_exit,
+            "Claude 正在运行，请确认强制退出并汉化，或正常退出后重试"
+        );
+        if force_exit {
+            crate::installation::force_exit_claude()?;
+        }
+        ensure!(
+            !crate::installation::environment()?.running,
+            "Claude 仍在运行，请退出后重试"
         );
         let mut state = LocalState {
             stage: "copying".into(),

@@ -84,6 +84,22 @@ fn probe<T: serde::de::DeserializeOwned>(script: &str, path: Option<&Path>) -> R
     );
     envelope.data.context("Windows 安装检测缺少结果")
 }
+pub(crate) fn force_exit_claude() -> Result<()> {
+    probe::<bool>(r#"
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$ErrorActionPreference='Stop'
+try {
+    $processes = @(Get-Process | Where-Object { $_.ProcessName -eq 'Claude' })
+    foreach ($process in $processes) {
+        try { Stop-Process -InputObject $process -Force -ErrorAction Stop }
+        catch { if (-not $process.HasExited) { throw } }
+    }
+    foreach ($process in $processes) { if (-not $process.WaitForExit(5000)) { throw 'Claude 退出超时' } }
+    @{ok=$true;data=$true}|ConvertTo-Json -Compress
+} catch { @{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress }
+"#, None).context("无法退出 Claude，请手动关闭后重试")?;
+    Ok(())
+}
 const INSPECT: &str = r#"
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference='Stop'
 try {
@@ -315,19 +331,7 @@ impl Installer {
             );
             if force_exit {
                 // 仅在本次安装明确授权且包重新验证通过后关闭 Claude。
-                probe::<bool>(r#"
-[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
-$ErrorActionPreference='Stop'
-try {
-    $processes = @(Get-Process | Where-Object { $_.ProcessName -eq 'Claude' })
-    foreach ($process in $processes) {
-        try { Stop-Process -InputObject $process -Force -ErrorAction Stop }
-        catch { if (-not $process.HasExited) { throw } }
-    }
-    foreach ($process in $processes) { if (-not $process.WaitForExit(5000)) { throw 'Claude 退出超时' } }
-    @{ok=$true;data=$true}|ConvertTo-Json -Compress
-} catch { @{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress }
-"#, None).context("无法退出 Claude，请手动关闭后重试")?;
+                force_exit_claude()?;
             }
             let final_env = environment()?;
             validate_package(&info, &task.version, &expected.architecture, &final_env)?;

@@ -63,3 +63,23 @@ test('confirmed installation updates task and latest status without offering ins
   ui.data.task={...task,id:'new-download'};
   assert.doesNotMatch(ui.taskView(ui.data.task),/已安装更新/);
 });
+
+test('localization requires confirmation before forcing running Claude to exit',async()=>{
+ const elements={};const calls=[];
+ for(const key of ['#modal','#modal-content','#local-back','#local-accept'])elements[key]={};
+ elements['#modal'].showModal=function(){this.open=true};elements['#modal'].close=function(){this.open=false};
+ global.document={querySelector:key=>elements[key]};
+ const bridge={localizationRuntime:async()=>({originalRunning:true}),prepareLocalized:async force=>{calls.push(force);return {stage:'prepared'}}};
+ const {LocalizationUI}=load('src/localization-view.ts',{'./bridge':{bridge}});
+ const ui=new LocalizationUI(()=>{});await ui.action('local-confirm');
+ assert.match(elements['#modal-content'].innerHTML,/强制退出并汉化/);assert.deepEqual(calls,[]);
+ elements['#local-back'].onclick();assert.deepEqual(calls,[]);
+ await ui.action('local-confirm');elements['#local-accept'].onclick();await new Promise(setImmediate);
+ assert.deepEqual(calls,[true]);assert.equal(ui.state.stage,'prepared');
+});
+test('localization process detection failure cannot grant force exit permission',async()=>{
+ const calls=[];const bridge={localizationRuntime:async()=>{throw Error('probe failed')},prepareLocalized:async force=>calls.push(force)};
+ const {LocalizationUI}=load('src/localization-view.ts',{'./bridge':{bridge}});
+ const ui=new LocalizationUI(()=>{});await ui.action('local-confirm');
+ assert.match(ui.error,/probe failed/);assert.deepEqual(calls,[]);assert.equal(ui.busy,false);
+});

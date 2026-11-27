@@ -36,7 +36,7 @@ export const bridge = {
   stopInstall:()=>invoke<InstallState>('stop_install_wait'),
   localizationRuntime:()=>invoke<RuntimeState>('get_localization_runtime'),
   localization:()=>invoke<LocalState>('get_localization_state'),
-  prepareLocalized:()=>invoke<LocalState>('prepare_localized_copy'),
+  prepareLocalized:(forceExit=false)=>invoke<LocalState>('prepare_localized_copy',{forceExit}),
   cancelLocalized:()=>invoke<void>('cancel_localization'),
   launchLocalized:()=>invoke<LocalState>('launch_localized_copy'),
   onLocalization:(callback:(state:LocalState)=>void)=>listen<LocalState>('localization-task',event=>callback(event.payload)),
