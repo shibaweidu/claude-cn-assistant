@@ -47,3 +47,19 @@ test('completion event starts installation once and only for Windows MSIX',async
   event({id:'win',stage:'ready',assetName:'Claude-win-x64.msix'});
   event({id:'win',stage:'ready',assetName:'Claude-win-x64.msix'});assert.equal(prepares,1);
 });
+
+test('confirmed installation updates task and latest status without offering installation again',()=>{
+  const {DownloadUI}=load('src/download-view.ts',{'./bridge':{bridge:{}},'./install-view':{InstallUI:class{active(){return false}view(){return ''}}}});
+  const ui=new DownloadUI(()=>{},()=>{},()=>false);
+  const task={id:'download-1',stage:'ready',version:'6.28899.6',assetName:'Claude-win-x64.msix',downloaded:100,total:100};
+  ui.data.task=task;
+  ui.data.release={version:task.version,checkedAt:1,assets:[{platform:'windows',architecture:'x64',name:task.assetName,size:100}]};
+  ui.install.state={stage:'installed',taskId:task.id,info:{version:'6.28899.6.0',architecture:'x64'}};
+  assert.match(ui.taskView(task),/已安装更新/);
+  assert.doesNotMatch(ui.taskView(task),/data-native="install-prepare"/);
+  assert.match(ui.view('windows','x64','6.6395.0'),/已更新至最新版本/);
+  ui.data.release.version='6.30000.0';
+  assert.match(ui.view('windows','x64','6.6395.0'),/发现新版本/);
+  ui.data.task={...task,id:'new-download'};
+  assert.doesNotMatch(ui.taskView(ui.data.task),/已安装更新/);
+});
