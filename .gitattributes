@@ -1,0 +1,7 @@
+# Hash fixtures must remain byte-identical on Windows, macOS and Linux checkouts.
+tests/fixtures/mirror-manifest-v2.json -text
+tests/fixtures/SHA256SUMS.txt -text
+*.png binary
+*.ico binary
+*.icns binary
+*.msix binary
