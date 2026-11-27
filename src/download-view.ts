@@ -16,13 +16,13 @@ export class DownloadUI {
   working=false;
   error='';
   initialized=false;
-  constructor(private changed:(progress?:boolean)=>void,private notify:(text:string)=>void,private auto:()=>boolean){this.install=new InstallUI(()=>this.changed(),notify)}
+  constructor(private changed:(progress?:boolean)=>void,private notify:(text:string)=>void,private auto:()=>boolean,private host:()=>string=()=> 'windows'){this.install=new InstallUI(()=>this.changed(),notify,host)}
   async init(){
     try{
       await bridge.onTask(task=>{const old=this.data.task;this.data.task=task;const progress=old?.id===task.id&&old?.stage===task.stage;this.changed(progress);if(!active(task))this.notify(task.stage==='ready'?'安装包已下载，正在准备安装检查':task.error||'下载已暂停，进度已保留');if(task.stage==='ready'&&(old?.id!==task.id||old.stage!=='ready'))void this.continueInstall(task);});
       this.data=await bridge.downloads();this.initialized=true;this.changed();
       await this.install.init();
-      if(this.data.task?.stage==='unverified'&&this.data.task.assetName.endsWith('.msix'))this.data.task=await bridge.verify();
+      if(this.data.task?.stage==='unverified'&&this.canInstall(this.data.task))this.data.task=await bridge.verify();
       if(this.data.task?.stage==='ready'){
         if(!this.install.state?.stage||['stopped','failed'].includes(this.install.state.stage))void this.continueInstall(this.data.task);
         else if(this.install.state.stage==='ready')void this.install.action('install-confirm');
@@ -32,8 +32,9 @@ export class DownloadUI {
       window.setInterval(()=>{if(this.auto())void this.check(false)},6*3600*1000);
     }catch(e){this.error=String(e);this.changed();}
   }
+  canInstall(task:DownloadTask){return this.host()==='macos'?task.assetName.endsWith('.dmg'):this.host()==='windows'&&task.assetName.endsWith('.msix')}
   async continueInstall(task:DownloadTask){
-    if(!task.assetName.endsWith('.msix')||this.install.active()||this.install.busy||this.taskInstalled(task))return;
+    if(!this.canInstall(task)||this.install.active()||this.install.busy||this.taskInstalled(task))return;
     await this.install.action('install-prepare');
   }
   async check(manual=true){
@@ -62,14 +63,15 @@ export class DownloadUI {
   view(platform:string,architecture:string,localVersion?:string){
     const {release,task,lastError,retryAt,stale}=this.data;
     const selected=release?.assets.find(a=>a.platform===(platform==='mac'?'macos':platform)&&a.architecture===(platform==='mac'?'universal':architecture));
-    const confirmed=this.install.state?.stage==='installed'&&platform==='windows'&&this.install.state.info?.architecture===architecture?this.install.state.info.version:undefined;
+    const confirmed=this.install.state?.stage==='installed'&&(platform==='windows'&&this.host()==='windows'&&this.install.state.info?.architecture===architecture||platform==='mac'&&this.host()==='macos')?this.install.state.info?.version:undefined;
     const effectiveVersion=confirmed&&(!localVersion||compare(confirmed,localVersion)===1)?confirmed:localVersion;
-    const ordering=effectiveVersion&&release?compare(release.version,effectiveVersion):null;
-    const upToDate=platform==='windows'&&(ordering===0||ordering===-1);
+    const sameHost=platform===(this.host()==='macos'?'mac':this.host());
+    const ordering=sameHost&&effectiveVersion&&release?compare(release.version,effectiveVersion):null;
+    const upToDate=sameHost&&(ordering===0||ordering===-1);
     const status=ordering===1?'发现新版本':ordering===0?'已更新至最新版本':ordering===-1?'镜像版本早于本机':release?'镜像版本已获取':'尚未检查版本';
     const checked=release?new Date(release.checkedAt*1000).toLocaleString('zh-CN'):'—';
     return `<div class="page-heading"><div><h1>下载与更新</h1><p>原版安装包，来自你指定的社区镜像。</p></div><button class="subtle-button" data-native="release-check" ${this.checking?'disabled':''}>${this.checking?'正在查询…':'检查版本'}</button></div>
-      ${this.install.state?.stage==='failed'?`<div class="notice" role="alert">安装未能继续：${esc(this.install.state.message)}<br>请查看下方 Windows 安装详情。</div>`:''}
+      ${this.install.state?.stage==='failed'?`<div class="notice" role="alert">安装未能继续：${esc(this.install.state.message)}<br>请查看下方安装详情。</div>`:''}
       ${this.error||lastError?`<div class="notice" role="alert">${esc(this.error||lastError)}${retryAt>Date.now()/1000?`<br>下次可重试：${esc(new Date(retryAt*1000).toLocaleTimeString('zh-CN'))}`:''}<br><button class="text-button" data-native="release-page">打开镜像发布页</button></div>`:''}
       <div class="notice">下载渠道：${this.data.channel.accelerated?'公益镜像加速':'GitHub Releases'} <button class="text-button" data-native="package-channel" ${active(task)||this.checking||this.working?'disabled':''}>切换到${this.data.channel.accelerated?' GitHub 备用':'公益加速'}</button></div>
       <div class="platform-tabs" role="tablist" aria-label="下载操作系统">${[['windows','Windows'],['mac','macOS'],['linux','Linux']].map(([key,label])=>`<button role="tab" aria-selected="${platform===key}" data-platform="${key}">${label}</button>`).join('')}</div>
@@ -80,14 +82,14 @@ export class DownloadUI {
       ${ordering===-1?'<div class="notice">本机版本更新，无需降级。你仍可保存镜像安装包，但助手不会自动安装。</div>':''}
       ${task?`<div class="section-title"><h2>下载任务</h2><span>切换页面不会中断下载</span></div>${this.taskView(task)}`:''}
       ${this.install.view()}
-      <div class="notice">安装包与校验和锁定在同一个 GitHub Release。Windows 安装前会再次核对 SHA256、签名、身份和架构。macOS 与 Linux 安装包仅保存。${this.auto()?'助手运行时每 6 小时自动检查一次。':'自动检查已关闭。'}</div>`;
+      <div class="notice">安装包与校验和锁定在同一个 GitHub Release。本机安装前会再次核对 SHA256、签名、身份和架构。macOS 更新安装到当前用户的 Applications，旧版保留备份；其他操作系统的安装包仅保存。${this.auto()?'助手运行时每 6 小时自动检查一次。':'自动检查已关闭。'}</div>`;
   }
   taskView(task:DownloadTask){
     const installed=this.taskInstalled(task);
     const installing=this.install.state?.taskId===task.id&&['launching','awaitingInstaller'].includes(this.install.state.stage);
     const taskLabel=installed?'已安装更新':installing?'等待安装完成':this.install.busy?'正在检查安装条件':stages[task.stage]||task.stage;
     const percent=task.total?Math.min(100,task.downloaded/task.total*100):0;
-    return `<section class="panel task-live" aria-label="下载任务"><div class="panel-top"><h2>${esc(task.assetName)}</h2><span class="badge warm" data-task-stage>${esc(taskLabel)}</span></div><div class="details"><div class="operation-label"><span data-task-size>${bytes(task.downloaded)} / ${bytes(task.total)}</span><span data-task-percent>${percent.toFixed(1)}%</span></div><progress class="native-progress" value="${task.downloaded}" max="${task.total||1}" aria-label="下载字节进度"></progress><p class="task-error" role="alert">${esc(task.error||'')}</p>${task.path?`<p class="path-display task-path">${esc(task.path)}</p>`:''}<div class="task-actions">${installed?'<span class="badge">此安装包对应的版本已安装</span>':''}${active(task)?`<button class="subtle-button" data-native="package-cancel" ${!task.cancellable||this.working?'disabled':''}>暂停下载</button>`:task.stage==='ready'?`<button class="subtle-button" data-native="package-reveal" ${this.working?'disabled':''}>打开所在目录</button>${task.assetName.endsWith('.msix')&&!installed?`<button class="primary-button" data-native="install-prepare" ${this.install.active()||this.install.busy?'disabled':''}>${this.install.busy?'正在检查…':installing?'等待安装完成':'检查并安装'}</button>`:''}`:task.stage==='unverified'?`<button class="subtle-button" data-native="package-verify" ${this.working?'disabled':''}>${this.working?'正在校验…':'重新验证文件'}</button>`:`<span>进度已保留。选择相同版本安装包可继续下载。</span>`}</div></div></section>`;
+    return `<section class="panel task-live" aria-label="下载任务"><div class="panel-top"><h2>${esc(task.assetName)}</h2><span class="badge warm" data-task-stage>${esc(taskLabel)}</span></div><div class="details"><div class="operation-label"><span data-task-size>${bytes(task.downloaded)} / ${bytes(task.total)}</span><span data-task-percent>${percent.toFixed(1)}%</span></div><progress class="native-progress" value="${task.downloaded}" max="${task.total||1}" aria-label="下载字节进度"></progress><p class="task-error" role="alert">${esc(task.error||'')}</p>${task.path?`<p class="path-display task-path">${esc(task.path)}</p>`:''}<div class="task-actions">${installed?'<span class="badge">此安装包对应的版本已安装</span>':''}${active(task)?`<button class="subtle-button" data-native="package-cancel" ${!task.cancellable||this.working?'disabled':''}>暂停下载</button>`:task.stage==='ready'?`<button class="subtle-button" data-native="package-reveal" ${this.working?'disabled':''}>打开所在目录</button>${this.canInstall(task)&&!installed?`<button class="primary-button" data-native="install-prepare" ${this.install.active()||this.install.busy?'disabled':''}>${this.install.busy?'正在检查…':installing?'等待安装完成':'检查并安装'}</button>`:''}`:task.stage==='unverified'?`<button class="subtle-button" data-native="package-verify" ${this.working?'disabled':''}>${this.working?'正在校验…':'重新验证文件'}</button>`:`<span>进度已保留。选择相同版本安装包可继续下载。</span>`}</div></div></section>`;
   }
   banner(){const task=this.data.task;return active(task)?`<button class="task-banner" data-goto="downloads"><span>${esc(stages[task!.stage])} · ${esc(task!.assetName)}</span><span data-banner-size>${bytes(task!.downloaded)} / ${bytes(task!.total)}</span></button>`:this.install.banner()}
   updateProgress(){

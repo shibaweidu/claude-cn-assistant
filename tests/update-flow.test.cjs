@@ -83,3 +83,14 @@ test('localization process detection failure cannot grant force exit permission'
  const ui=new LocalizationUI(()=>{});await ui.action('local-confirm');
  assert.match(ui.error,/probe failed/);assert.deepEqual(calls,[]);assert.equal(ui.busy,false);
 });
+
+test('macOS only offers native DMG installation and confirms user Applications destination',async()=>{
+ const s=setup(true);s.ui.host=()=> 'macos';await s.ui.action('install-prepare');
+ assert.match(s.content.innerHTML,/macOS Developer ID/);assert.match(s.content.innerHTML,/Applications/);assert.doesNotMatch(s.content.innerHTML,/打开 Windows 安装器/);
+ class InstallUI{active(){return false}view(){return ''}}
+ const {DownloadUI}=load('src/download-view.ts',{'./bridge':{bridge:{}},'./install-view':{InstallUI}});
+ const ui=new DownloadUI(()=>{},()=>{},()=>false,()=> 'macos');
+ assert.equal(ui.canInstall({assetName:'Claude-mac-universal.dmg'}),true);
+ assert.equal(ui.canInstall({assetName:'Claude-win-x64.msix'}),false);
+ assert.doesNotMatch(ui.taskView({id:'windows',assetName:'Claude-win-x64.msix',stage:'ready',downloaded:100,total:100}),/install-prepare/);
+});

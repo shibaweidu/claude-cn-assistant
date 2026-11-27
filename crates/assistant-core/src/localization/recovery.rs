@@ -65,12 +65,19 @@ impl Localizer {
         no_links(&dir)?;
         let mut files = Vec::new();
         collect(&dir, &dir, &mut files)?;
+        let layout = CopyLayout::at(&dir);
         let receipt: LocalState = serde_json::from_slice(&fs::read(dir.join("cn-receipt.json"))?)?;
+        if layout.bundle.is_some() {
+            ensure!(
+                !receipt.fuse_hash.is_empty() && digest(&layout.fuse)? == receipt.fuse_hash,
+                "Electron Framework 已变化，不能更新启动脚本"
+            );
+        }
         ensure!(
             receipt.patch_version == 1
-                && digest(&dir.join("Claude.exe"))? == receipt.exe_hash
-                && digest(&dir.join("resources/app.asar"))? == receipt.app_hash
-                && digest(&dir.join("resources/ion-dist.asar"))? == receipt.ion_hash,
+                && digest(&layout.exe.clone())? == receipt.exe_hash
+                && digest(&layout.resources.join("app.asar"))? == receipt.app_hash
+                && digest(&layout.resources.join("ion-dist.asar"))? == receipt.ion_hash,
             "副本关键文件变化，不能更新启动脚本"
         );
         for (name, bytes) in SCRIPTS {
@@ -108,6 +115,7 @@ impl Localizer {
             fs::metadata(&receipt_path)?.len() < 1024 * 1024,
             "副本收据过大"
         );
+        let layout = CopyLayout::at(dir);
         let mut receipt: LocalState =
             serde_json::from_slice(&fs::read(receipt_path)?).context("缺少有效副本收据")?;
         ensure!(
@@ -115,20 +123,34 @@ impl Localizer {
             "此副本补丁版本不兼容，请重新制作"
         );
         ensure!(
-            digest(&dir.join("Claude.exe"))? == receipt.exe_hash
-                && digest(&dir.join("resources/ion-dist.asar"))? == receipt.ion_hash
-                && digest(&dir.join("resources/app.asar"))? == receipt.app_hash,
+            digest(&layout.exe.clone())? == receipt.exe_hash
+                && digest(&layout.resources.join("ion-dist.asar"))? == receipt.ion_hash
+                && digest(&layout.resources.join("app.asar"))? == receipt.app_hash,
             "副本关键文件校验失败，不可恢复或启动"
         );
+        if let Some(bundle) = &layout.bundle {
+            ensure!(
+                !receipt.fuse_hash.is_empty() && digest(&layout.fuse)? == receipt.fuse_hash,
+                "Electron Framework 校验失败"
+            );
+            #[cfg(target_os = "macos")]
+            crate::macos::verify_copy(bundle)?;
+            #[cfg(not(target_os = "macos"))]
+            let _ = bundle;
+        }
         for (name, expected) in SCRIPTS {
             ensure!(
                 fs::read(dir.join("cn-runtime").join(name))? == *expected,
                 "副本脚本版本不匹配，请重新制作"
             );
         }
-        crate::ion_asar::verify_ion_asar(&dir.join("resources/ion-dist.asar"))?;
+        crate::ion_asar::verify_ion_asar(&layout.resources.join("ion-dist.asar"))?;
         receipt.stage = "prepared".into();
-        receipt.managed_exe = Some(self.root.join("managed/Claude.exe"));
+        receipt.managed_exe = Some(
+            self.root
+                .join("managed")
+                .join(layout.exe.strip_prefix(dir)?),
+        );
         Ok(receipt)
     }
     pub(super) fn switch_directories(&self, source: &Path, backup: &Path) -> Result<()> {
@@ -435,12 +457,13 @@ impl Localizer {
 mod tests {
     use super::*;
     fn copy_fixture(root: &Path, dir: &Path, version: &str) {
+        let layout = CopyLayout::at(dir);
         fs::create_dir_all(dir.join("resources")).unwrap();
         fs::create_dir_all(dir.join("cn-runtime")).unwrap();
-        fs::write(dir.join("Claude.exe"), b"fixture exe").unwrap();
-        fs::write(dir.join("resources/app.asar"), b"fixture app").unwrap();
+        fs::write(layout.exe.clone(), b"fixture exe").unwrap();
+        fs::write(layout.resources.join("app.asar"), b"fixture app").unwrap();
         let js=br#"const langs=["en-US","de-DE","fr-FR","ko-KR","ja-JP","es-419","es-ES","it-IT","hi-IN","pt-BR","id-ID"];"#;
-        let ion = dir.join("resources/ion-dist.asar");
+        let ion = layout.resources.join("ion-dist.asar");
         fs::write(
             &ion,
             crate::ion_asar::build_test_asar(&[
@@ -457,8 +480,8 @@ mod tests {
             patch_version: 1,
             source_version: version.into(),
             managed_exe: Some(root.join("managed/Claude.exe")),
-            exe_hash: digest(&dir.join("Claude.exe")).unwrap(),
-            app_hash: digest(&dir.join("resources/app.asar")).unwrap(),
+            exe_hash: digest(&layout.exe.clone()).unwrap(),
+            app_hash: digest(&layout.resources.join("app.asar")).unwrap(),
             ion_hash: digest(&ion).unwrap(),
             ..Default::default()
         };

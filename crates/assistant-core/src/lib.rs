@@ -1,8 +1,10 @@
 use anyhow::{bail, Context, Result};
+mod app_layout;
 pub mod downloads;
 pub mod installation;
 mod ion_asar;
 pub mod localization;
+pub mod macos;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -54,6 +56,9 @@ pub struct Snapshot {
     pub platform: String,
 }
 pub fn data_dir() -> Result<PathBuf> {
+    #[cfg(target_os = "macos")]
+    return Ok(macos::home()?.join("Library/Application Support/ClaudeCnAssistant"));
+    #[cfg(not(target_os = "macos"))]
     Ok(
         PathBuf::from(std::env::var_os("LOCALAPPDATA").context("无法获取本地应用数据目录")?)
             .join("ClaudeCnAssistant"),
@@ -111,28 +116,33 @@ pub fn save_settings(root: &Path, settings: &Settings) -> Result<()> {
     Ok(())
 }
 pub fn validate_source(path: &Path) -> Result<PathBuf> {
-    if path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .map(|s| !s.eq_ignore_ascii_case("Claude.exe"))
-        .unwrap_or(true)
+    #[cfg(target_os = "macos")]
+    return macos::validate_bundle(path);
+    #[cfg(not(target_os = "macos"))]
     {
-        bail!("请选择安装目录内真实的 Claude.exe，不是命令行别名或快捷方式");
+        if path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .map(|s| !s.eq_ignore_ascii_case("Claude.exe"))
+            .unwrap_or(true)
+        {
+            bail!("请选择安装目录内真实的 Claude.exe，不是命令行别名或快捷方式");
+        }
+        if path
+            .to_string_lossy()
+            .to_lowercase()
+            .contains("\\microsoft\\windowsapps\\")
+        {
+            bail!("WindowsApps 执行别名不是实际安装文件");
+        }
+        let canonical = path
+            .canonicalize()
+            .context("无法访问 Claude.exe，请确认路径和读取权限")?;
+        if !canonical.is_file() || !canonical.parent().unwrap().join("resources").is_dir() {
+            bail!("所选目录缺少 resources，不是完整的 Claude Desktop 安装");
+        }
+        Ok(canonical)
     }
-    if path
-        .to_string_lossy()
-        .to_lowercase()
-        .contains("\\microsoft\\windowsapps\\")
-    {
-        bail!("WindowsApps 执行别名不是实际安装文件");
-    }
-    let canonical = path
-        .canonicalize()
-        .context("无法访问 Claude.exe，请确认路径和读取权限")?;
-    if !canonical.is_file() || !canonical.parent().unwrap().join("resources").is_dir() {
-        bail!("所选目录缺少 resources，不是完整的 Claude Desktop 安装");
-    }
-    Ok(canonical)
 }
 fn hidden(command: &mut Command) {
     #[cfg(windows)]
@@ -184,6 +194,7 @@ pub(crate) fn powershell(script: &str, source: Option<&Path>) -> Result<String> 
         .trim()
         .to_string())
 }
+#[cfg(not(target_os = "macos"))]
 const PROBE: &str = r#"
 $ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $paths=[Collections.Generic.List[string]]::new(); $warnings=[Collections.Generic.List[string]]::new()
@@ -206,18 +217,21 @@ $items=@(foreach($p in ($paths | Select-Object -Unique)) {
 $running=@(Get-Process -Name 'Claude' -ErrorAction SilentlyContinue).Count -gt 0
 @{items=$items; running=$running; warnings=@($warnings)} | ConvertTo-Json -Depth 5 -Compress
 "#;
+#[cfg(not(target_os = "macos"))]
 #[derive(Deserialize)]
 struct Probe {
     items: Vec<ProbeItem>,
     running: bool,
     warnings: Vec<String>,
 }
+#[cfg(not(target_os = "macos"))]
 #[derive(Deserialize)]
 struct ProbeItem {
     path: PathBuf,
     version: String,
     kind: String,
 }
+#[cfg(any(not(target_os = "macos"), test))]
 fn architecture(path: &Path) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let parse = || -> Option<String> {
@@ -248,72 +262,86 @@ fn architecture(path: &Path) -> String {
 }
 pub fn snapshot(root: &Path) -> Result<Snapshot> {
     let settings = load_settings(root)?;
-    let probe: Probe = serde_json::from_str(&powershell(PROBE, settings.source_path.as_deref())?)
-        .context("系统检测返回了无法识别的数据")?;
-    let mut warnings = probe.warnings;
-    let installations: Vec<Installation> = probe
-        .items
-        .into_iter()
-        .filter_map(|i| {
-            if validate_source(&i.path).is_err() {
-                return None;
+    #[cfg(target_os = "macos")]
+    return macos::snapshot(root, settings);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let probe: Probe =
+            serde_json::from_str(&powershell(PROBE, settings.source_path.as_deref())?)
+                .context("系统检测返回了无法识别的数据")?;
+        let mut warnings = probe.warnings;
+        let installations: Vec<Installation> = probe
+            .items
+            .into_iter()
+            .filter_map(|i| {
+                if validate_source(&i.path).is_err() {
+                    return None;
+                }
+                let resources = i.path.parent()?.join("resources");
+                let layout = if resources.join("ion-dist.asar").is_file() {
+                    "asar"
+                } else if resources.join("ion-dist").is_dir() {
+                    "directory"
+                } else {
+                    "unknown"
+                };
+                Some(Installation {
+                    architecture: architecture(&i.path),
+                    path: i.path,
+                    version: i.version,
+                    kind: i.kind,
+                    layout: layout.into(),
+                })
+            })
+            .collect();
+        let selected = if let Some(path) = &settings.source_path {
+            let selected = installations
+                .iter()
+                .find(|i| {
+                    i.path
+                        .to_string_lossy()
+                        .eq_ignore_ascii_case(&path.to_string_lossy())
+                })
+                .cloned();
+            if selected.is_none() {
+                warnings.push("已选择的安装不可用，请重新选择 Claude.exe".into());
             }
-            let resources = i.path.parent()?.join("resources");
-            let layout = if resources.join("ion-dist.asar").is_file() {
-                "asar"
-            } else if resources.join("ion-dist").is_dir() {
-                "directory"
-            } else {
-                "unknown"
-            };
-            Some(Installation {
-                architecture: architecture(&i.path),
-                path: i.path,
-                version: i.version,
-                kind: i.kind,
-                layout: layout.into(),
-            })
+            selected
+        } else if installations.len() == 1 {
+            installations.first().cloned()
+        } else {
+            None
+        };
+        Ok(Snapshot {
+            settings,
+            installations,
+            selected,
+            running: probe.running,
+            warnings,
+            data_dir: root.to_path_buf(),
+            platform: std::env::consts::OS.into(),
         })
-        .collect();
-    let selected = if let Some(path) = &settings.source_path {
-        let selected = installations
-            .iter()
-            .find(|i| {
-                i.path
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case(&path.to_string_lossy())
-            })
-            .cloned();
-        if selected.is_none() {
-            warnings.push("已选择的安装不可用，请重新选择 Claude.exe".into());
-        }
-        selected
-    } else if installations.len() == 1 {
-        installations.first().cloned()
-    } else {
-        None
-    };
-    Ok(Snapshot {
-        settings,
-        installations,
-        selected,
-        running: probe.running,
-        warnings,
-        data_dir: root.to_path_buf(),
-        platform: std::env::consts::OS.into(),
-    })
+    }
 }
 pub fn launch_official(root: &Path) -> Result<()> {
     let snapshot = snapshot(root)?;
     let installation = snapshot.selected.context("请先选择一个有效安装")?;
     let exe = validate_source(&installation.path)?;
-    let mut command = Command::new(&exe);
-    hidden(&mut command);
-    command
-        .current_dir(exe.parent().context("安装目录无效")?)
-        .spawn()
-        .context("无法启动官方 Claude")?;
-    Ok(())
+    #[cfg(target_os = "macos")]
+    {
+        macos::run("/usr/bin/open", &["-n".as_ref(), exe.as_os_str()])?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut command = Command::new(&exe);
+        hidden(&mut command);
+        command
+            .current_dir(exe.parent().context("安装目录无效")?)
+            .spawn()
+            .context("无法启动官方 Claude")?;
+        Ok(())
+    }
 }
 #[cfg(test)]
 mod tests {

@@ -287,6 +287,10 @@ async fn reveal_download(downloads: tauri::State<'_, Arc<Downloads>>) -> Result<
     let service = Arc::clone(downloads.inner());
     tauri::async_runtime::spawn_blocking(move || {
         let path = service.ready_path().map_err(err)?;
+        #[cfg(target_os = "macos")]
+        assistant_core::macos::run("/usr/bin/open", &["-R".as_ref(), path.as_os_str()])
+            .map_err(err)?;
+        #[cfg(not(target_os = "macos"))]
         std::process::Command::new("explorer.exe")
             .arg("/select,")
             .arg(path)
@@ -318,6 +322,12 @@ async fn update_settings(settings: Settings) -> Result<Settings, String> {
 #[tauri::command]
 async fn select_source_installation() -> Result<Option<Settings>, String> {
     tauri::async_runtime::spawn_blocking(|| {
+        #[cfg(target_os = "macos")]
+        let path = rfd::FileDialog::new()
+            .set_title("选择 Claude.app")
+            .add_filter("Claude 应用", &["app"])
+            .pick_file();
+        #[cfg(not(target_os = "macos"))]
         let path = rfd::FileDialog::new()
             .set_title("选择 Claude Desktop 安装目录内的 Claude.exe")
             .add_filter("Claude", &["exe"])
@@ -347,6 +357,9 @@ async fn launch_official() -> Result<(), String> {
 fn open_data_directory() -> Result<(), String> {
     let root = assistant_core::data_dir().map_err(err)?;
     std::fs::create_dir_all(&root).map_err(err)?;
+    #[cfg(target_os = "macos")]
+    assistant_core::macos::run("/usr/bin/open", &[root.as_os_str()]).map_err(err)?;
+    #[cfg(not(target_os = "macos"))]
     std::process::Command::new("explorer.exe")
         .arg(root)
         .spawn()
@@ -360,6 +373,9 @@ fn open_project_link(kind: String) -> Result<(), String> {
         "source" => "https://github.com/Wangnov/claude-app-mirror",
         _ => return Err("链接不在允许列表中".into()),
     };
+    #[cfg(target_os = "macos")]
+    assistant_core::macos::run("/usr/bin/open", &[url.as_ref()]).map_err(err)?;
+    #[cfg(not(target_os = "macos"))]
     std::process::Command::new("explorer.exe")
         .arg(url)
         .spawn()

@@ -6,7 +6,8 @@ const net=require('node:net');
 const fs=require('node:fs');
 const app=process.env.CLAUDE_CN_MANAGED_EXE;
 if(!app)throw new Error('未指定受管副本');
-const expected=fs.realpathSync(app).toLowerCase();
+const expected=fs.realpathSync(app);
+const sameExecutable=(a,b)=>process.platform==='win32'?a.toLowerCase()===b.toLowerCase():a===b;
 const hook=path.join(__dirname,'hook.cjs');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function main(){
@@ -32,8 +33,8 @@ async function main(){
       function onMessage(event){const value=JSON.parse(event.data);if(value.id!==current)return;clearTimeout(timeout);ws.removeEventListener('message',onMessage);if(value.error||value.result?.exceptionDetails)reject(new Error('受管副本注入失败：'+JSON.stringify(value.error||value.result?.exceptionDetails)));else resolve(value.result?.result?.value)}
       ws.addEventListener('message',onMessage);ws.send(JSON.stringify({id:current,method:'Runtime.evaluate',params:{expression,returnByValue:true,awaitPromise:true}}));
     });
-    const actual=await evaluate('process.getBuiltinModule("fs").realpathSync(process.execPath).toLowerCase()');
-    if(actual!==expected)throw new Error('连接进程不是受管副本，已停止注入');verified=true;
+    const actual=await evaluate('process.getBuiltinModule("fs").realpathSync(process.execPath)');
+    if(!sameExecutable(actual,expected))throw new Error('连接进程不是受管副本，已停止注入');verified=true;
     if(!await evaluate(`process.getBuiltinModule("module").createRequire(process.resourcesPath+"/app.asar/package.json")(${JSON.stringify(hook)});globalThis.__claudeCnHookInstalled===true`))throw new Error('汉化 hook 未就绪');
     let pages=0;for(let i=0;i<24;i++){pages=await evaluate('globalThis.__claudeCnPages||0');if(pages)break;await delay(500)}
     if(!pages)throw new Error('副本已启动，但未确认目标页面汉化注入；请检查 hook.log');

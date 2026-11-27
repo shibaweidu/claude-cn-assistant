@@ -1,3 +1,4 @@
+use crate::app_layout::CopyLayout;
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -57,12 +58,14 @@ pub struct LocalState {
     pub exe_hash: String,
     pub ion_hash: String,
     pub patch_version: u32,
+    #[serde(default)]
+    pub fuse_hash: String,
 }
 impl LocalState {
     pub fn active(&self) -> bool {
         matches!(
             self.stage.as_str(),
-            "copying" | "patching" | "verifying" | "committing" | "launching"
+            "copying" | "patching" | "verifying" | "committing" | "launching" | "signing"
         )
     }
 }
@@ -164,10 +167,18 @@ fn collect(root: &Path, base: &Path, out: &mut Vec<(PathBuf, u64)>) -> Result<()
                 path.display()
             );
         }
-        ensure!(
-            !meta.file_type().is_symlink(),
-            "源目录含符号链接，无法安全复制"
-        );
+        if meta.file_type().is_symlink() {
+            #[cfg(target_os = "macos")]
+            {
+                ensure!(
+                    path.canonicalize()?.starts_with(base.canonicalize()?),
+                    "应用内链接越界"
+                );
+                continue;
+            }
+            #[cfg(not(target_os = "macos"))]
+            anyhow::bail!("源目录含符号链接，无法安全复制");
+        }
         if meta.is_dir() {
             collect(&path, base, out)?;
         } else if meta.is_file() {
@@ -179,11 +190,11 @@ fn collect(root: &Path, base: &Path, out: &mut Vec<(PathBuf, u64)>) -> Result<()
 pub fn probe_local_resources() -> Result<()> {
     let snapshot = crate::snapshot(&crate::data_dir()?)?;
     let source = snapshot.selected.context("没有选中的原版安装")?;
-    let ion = source
-        .path
-        .parent()
-        .context("源目录无效")?
-        .join("resources/ion-dist.asar");
+    #[cfg(target_os = "macos")]
+    let layout = CopyLayout::mac(&source.path);
+    #[cfg(not(target_os = "macos"))]
+    let layout = CopyLayout::at(source.path.parent().context("源目录无效")?);
+    let ion = layout.resources.join("ion-dist.asar");
     let before = digest(&ion)?;
     let dir = tempfile::tempdir()?;
     let target = dir.path().join("ion-dist.asar");
@@ -199,8 +210,23 @@ pub fn probe_local_resources() -> Result<()> {
 }
 impl Localizer {
     pub fn runtime_state(&self) -> Result<RuntimeState> {
-        let output = crate::powershell(
-            r#"
+        #[cfg(target_os = "macos")]
+        {
+            let managed = CopyLayout::at(&self.root.join("managed")).exe;
+            let mut state = RuntimeState::default();
+            for (_, path) in crate::macos::processes()? {
+                if path == managed {
+                    state.managed_running = true;
+                } else {
+                    state.original_running = true;
+                }
+            }
+            return Ok(state);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let output = crate::powershell(
+                r#"
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $paths = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -eq 'Claude' } | ForEach-Object {
@@ -208,14 +234,15 @@ $paths = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -eq 'Cl
 })
 ConvertTo-Json -InputObject $paths -Compress
 "#,
-            None,
-        )?;
-        let paths: Vec<String> =
-            serde_json::from_str(output.trim()).context("无法读取 Claude 运行状态")?;
-        Ok(classify_processes(
-            &paths,
-            &self.root.join("managed/Claude.exe"),
-        ))
+                None,
+            )?;
+            let paths: Vec<String> =
+                serde_json::from_str(output.trim()).context("无法读取 Claude 运行状态")?;
+            Ok(classify_processes(
+                &paths,
+                &self.root.join("managed/Claude.exe"),
+            ))
+        }
     }
 
     pub fn new(root: PathBuf) -> Result<Self> {
@@ -269,7 +296,16 @@ ConvertTo-Json -InputObject $paths -Compress
         let snapshot = crate::snapshot(&self.root)?;
         let source = snapshot.selected.context("请先选择一个有效的原版安装")?;
         let exe = crate::validate_source(&source.path)?;
+        #[cfg(target_os = "macos")]
+        let source_root = exe.as_path();
+        #[cfg(not(target_os = "macos"))]
         let source_root = exe.parent().context("源目录无效")?;
+        #[cfg(target_os = "macos")]
+        let source_layout = CopyLayout::mac(source_root);
+        #[cfg(not(target_os = "macos"))]
+        let source_layout = CopyLayout::at(source_root);
+        #[cfg(target_os = "macos")]
+        crate::macos::verify_original(source_root)?;
         let managed = self.root.join("managed");
         ensure!(
             !source_root.starts_with(&self.root.canonicalize()?),
@@ -296,61 +332,83 @@ ConvertTo-Json -InputObject $paths -Compress
         };
         let staging = self.root.join(format!("staging-{}", uuid::Uuid::new_v4()));
         let result = (|| {
-            let source_app = source_root.join("resources/app.asar");
+            let source_app = source_layout.resources.join("app.asar");
             let source_hash = digest(&source_app)?;
-            let source_exe_hash = digest(&exe)?;
-            let source_ion_hash = digest(&source_root.join("resources/ion-dist.asar"))?;
+            let source_exe_hash = digest(&source_layout.exe)?;
+            let source_ion_hash = digest(&source_layout.resources.join("ion-dist.asar"))?;
             let mut files = Vec::new();
             collect(source_root, source_root, &mut files)?;
             state.total = files.iter().map(|(_, n)| n).sum();
             self.save(&state)?;
             self.publish(&state, &notify);
             fs::create_dir(&staging)?;
-            let mut buffer = vec![0; 1024 * 1024];
-            let mut last = Instant::now();
-            for (relative, _) in files {
+            #[cfg(target_os = "macos")]
+            {
+                crate::macos::copy_bundle(source_root, &staging.join("Claude.app"))?;
                 ensure!(
                     !self.cancel.load(Ordering::Acquire),
-                    "副本制作已取消；暂存文件保留，原版与旧副本未更改"
+                    "副本制作已取消，暂存目录保留"
                 );
-                let target = staging.join(&relative);
-                fs::create_dir_all(target.parent().context("目标目录无效")?)?;
-                let mut input = fs::File::open(source_root.join(&relative))?;
-                let mut output = fs::File::create(target)?;
-                loop {
-                    ensure!(!self.cancel.load(Ordering::Acquire), "副本制作已取消");
-                    let n = input.read(&mut buffer)?;
-                    if n == 0 {
-                        break;
-                    }
-                    output.write_all(&buffer[..n])?;
-                    state.copied += n as u64;
-                    if last.elapsed() > Duration::from_millis(150) {
-                        self.publish(&state, &notify);
-                        last = Instant::now();
+                state.copied = state.total;
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let mut buffer = vec![0; 1024 * 1024];
+                let mut last = Instant::now();
+                for (relative, _) in files {
+                    ensure!(
+                        !self.cancel.load(Ordering::Acquire),
+                        "副本制作已取消；暂存文件保留，原版与旧副本未更改"
+                    );
+                    let target = staging.join(&relative);
+                    fs::create_dir_all(target.parent().context("目标目录无效")?)?;
+                    let mut input = fs::File::open(source_root.join(&relative))?;
+                    let mut output = fs::File::create(target)?;
+                    loop {
+                        ensure!(!self.cancel.load(Ordering::Acquire), "副本制作已取消");
+                        let n = input.read(&mut buffer)?;
+                        if n == 0 {
+                            break;
+                        }
+                        output.write_all(&buffer[..n])?;
+                        state.copied += n as u64;
+                        if last.elapsed() > Duration::from_millis(150) {
+                            self.publish(&state, &notify);
+                            last = Instant::now();
+                        }
                     }
                 }
             }
+            let target_layout = CopyLayout::at(&staging);
             state.stage = "patching".into();
             state.message = "正在应用中文词表和本地界面补丁…".into();
             self.save(&state)?;
             self.publish(&state, &notify);
-            let ion = staging.join("resources/ion-dist.asar");
+            let ion = target_layout.resources.join("ion-dist.asar");
             ensure!(
                 ion.is_file(),
                 "当前仅支持 ion-dist.asar 布局；目录布局暂不修改"
             );
             ensure!(
-                digest(&staging.join("Claude.exe"))? == source_exe_hash
-                    && digest(&ion)? == source_ion_hash,
+                digest(&target_layout.exe)? == source_exe_hash && digest(&ion)? == source_ion_hash,
                 "源客户端在复制中更新或文件不完整，请重试"
             );
             crate::ion_asar::localize_ion_asar(&ion, CATALOGS)?;
-            patch_exe(&staging.join("Claude.exe"))?;
+            patch_exe(&target_layout.fuse)?;
             let runtime = staging.join("cn-runtime");
             fs::create_dir(&runtime)?;
             for (name, bytes) in SCRIPTS {
                 fs::write(runtime.join(name), bytes)?;
+            }
+            #[cfg(target_os = "macos")]
+            {
+                state.stage = "signing".into();
+                state.message = "正在为中文副本逐层重新签名…".into();
+                self.publish(&state, &notify);
+                crate::macos::sign_copy(
+                    source_root,
+                    target_layout.bundle.as_ref().context("缺少应用包")?,
+                )?;
             }
             state.stage = "verifying".into();
             state.message = "正在校验副本与未修改的 app.asar…".into();
@@ -358,24 +416,30 @@ ConvertTo-Json -InputObject $paths -Compress
             crate::ion_asar::verify_ion_asar(&ion)?;
             ensure!(
                 digest(&source_app)? == source_hash
-                    && digest(&staging.join("resources/app.asar"))? == source_hash,
+                    && digest(&target_layout.resources.join("app.asar"))? == source_hash,
                 "源版本在复制中变化或 app.asar 不一致，请重新制作"
             );
             ensure!(
-                digest(&exe)? == source_exe_hash
-                    && digest(&source_root.join("resources/ion-dist.asar"))? == source_ion_hash,
+                digest(&source_layout.exe)? == source_exe_hash
+                    && digest(&source_layout.resources.join("ion-dist.asar"))? == source_ion_hash,
                 "源客户端在汉化期间发生更新，请重新制作"
             );
             state.app_hash = source_hash;
-            state.exe_hash = digest(&staging.join("Claude.exe"))?;
+            state.exe_hash = digest(&target_layout.exe)?;
             state.ion_hash = digest(&ion)?;
+            state.fuse_hash = digest(&target_layout.fuse)?;
             ensure!(
                 !crate::installation::environment()?.running,
                 "Claude 在制作期间启动，请退出后重新制作"
             );
             state.stage = "committing".into();
             state.message = "校验通过，正在切换受管副本…".into();
-            state.managed_exe = Some(managed.join("Claude.exe"));
+            state.managed_exe = Some(
+                CopyLayout::at(&staging)
+                    .exe
+                    .strip_prefix(&staging)
+                    .map(|p| managed.join(p))?,
+            );
             fs::create_dir_all(self.root.join("backups"))?;
             let backup = self
                 .root
@@ -427,14 +491,22 @@ ConvertTo-Json -InputObject $paths -Compress
             !crate::installation::environment()?.running,
             "请先正常退出所有 Claude 进程，再启动中文版"
         );
-        let exe = self.root.join("managed/Claude.exe");
+        let layout = CopyLayout::at(&self.root.join("managed"));
+        let exe = layout.exe.clone();
         ensure!(
             digest(&exe)? == state.exe_hash
-                && digest(&self.root.join("managed/resources/ion-dist.asar"))? == state.ion_hash
-                && digest(&self.root.join("managed/resources/app.asar"))? == state.app_hash,
+                && digest(&layout.resources.join("ion-dist.asar"))? == state.ion_hash
+                && digest(&layout.resources.join("app.asar"))? == state.app_hash,
             "副本文件已变化，请重新制作"
         );
-        let mut command = std::process::Command::new("node");
+        #[cfg(target_os = "macos")]
+        let node = ["/opt/homebrew/bin/node", "/usr/local/bin/node"]
+            .into_iter()
+            .find(|p| Path::new(p).is_file())
+            .unwrap_or("node");
+        #[cfg(not(target_os = "macos"))]
+        let node = "node";
+        let mut command = std::process::Command::new(node);
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

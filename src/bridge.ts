@@ -9,7 +9,7 @@ export interface Release {version:string;tag:string;checkedAt:number;assets:Asse
 export interface DownloadTask {id:string;stage:string;assetName:string;version:string;downloaded:number;total:number;sha256:string;path:string|null;error:string|null;cancellable:boolean}
 export interface DownloadState {channel:{accelerated:boolean;repository:string};release:Release|null;task:DownloadTask|null;lastError:string|null;retryAt:number;stale:boolean}
 export interface PackageInfo {name:string;publisher:string;version:string;architecture:string;signatureStatus:string;signerMatches:boolean}
-export interface InstallState {id:string;stage:string;taskId:string;info:PackageInfo|null;message:string;startedAt:number;checkedAt:number;needsRebuild:boolean}
+export interface InstallState {id:string;stage:string;taskId:string;info:PackageInfo|null;message:string;startedAt:number;checkedAt:number;needsRebuild:boolean;targetPath?:string|null;backupPath?:string|null;stagingPath?:string|null}
 export interface RuntimeState {managedRunning:boolean;originalRunning:boolean;unknownRunning:boolean}
 export interface LocalState {stage:string;message:string;copied:number;total:number;sourceVersion:string;sourcePath:string|null;managedExe:string|null;backup:string|null;patchVersion:number}
 export interface BackupEntry {id:string;version:string;valid:boolean;message:string;bytes:number;modified:number;kind:string}

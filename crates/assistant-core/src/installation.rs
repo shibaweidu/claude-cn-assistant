@@ -9,6 +9,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+#[cfg_attr(target_os = "macos", allow(dead_code))]
 pub const PUBLISHER: &str = r#"CN="Anthropic, PBC", O="Anthropic, PBC", L=San Francisco, S=California, C=US, SERIALNUMBER=4860621, OID.2.5.4.15=Private Organization, OID.1.3.6.1.4.1.311.60.2.1.2=Delaware, OID.1.3.6.1.4.1.311.60.2.1.3=US"#;
 fn now() -> u64 {
     SystemTime::now()
@@ -54,6 +55,12 @@ pub struct InstallState {
     pub started_at: u64,
     pub checked_at: u64,
     pub needs_rebuild: bool,
+    #[serde(default)]
+    pub target_path: Option<PathBuf>,
+    #[serde(default)]
+    pub backup_path: Option<PathBuf>,
+    #[serde(default)]
+    pub staging_path: Option<PathBuf>,
 }
 impl InstallState {
     pub fn active(&self) -> bool {
@@ -85,7 +92,11 @@ fn probe<T: serde::de::DeserializeOwned>(script: &str, path: Option<&Path>) -> R
     envelope.data.context("Windows 安装检测缺少结果")
 }
 pub(crate) fn force_exit_claude() -> Result<()> {
-    probe::<bool>(r#"
+    #[cfg(target_os = "macos")]
+    return crate::macos::force_exit();
+    #[cfg(not(target_os = "macos"))]
+    {
+        probe::<bool>(r#"
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $ErrorActionPreference='Stop'
 try {
@@ -98,7 +109,8 @@ try {
     @{ok=$true;data=$true}|ConvertTo-Json -Compress
 } catch { @{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress }
 "#, None).context("无法退出 Claude，请手动关闭后重试")?;
-    Ok(())
+        Ok(())
+    }
 }
 const INSPECT: &str = r#"
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference='Stop'
@@ -125,6 +137,7 @@ try {
  @{ok=$true;data=@{name=$name;publisher=$publisher;version=$version;architecture=$arch;signatureStatus="$($sig.Status)";signerMatches=$matches}} | ConvertTo-Json -Depth 5 -Compress
 } catch {@{ok=$false;error=$_.Exception.Message} | ConvertTo-Json -Compress}
 "#;
+#[cfg(not(target_os = "macos"))]
 const ENVIRONMENT: &str = r#"
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference='Stop'
 try {
@@ -140,6 +153,13 @@ pub fn inspect_package(path: &Path) -> Result<PackageInfo> {
     probe(INSPECT, Some(path))
 }
 pub fn environment() -> Result<Environment> {
+    #[cfg(target_os = "macos")]
+    return Ok(Environment {
+        architecture: std::env::consts::ARCH.into(),
+        running: !crate::macos::processes()?.is_empty(),
+        packages: Vec::new(),
+    });
+    #[cfg(not(target_os = "macos"))]
     probe(ENVIRONMENT, None)
 }
 pub fn validate_package(
@@ -243,45 +263,50 @@ impl Installer {
         Ok(id)
     }
     pub fn prepare(&self, downloads: &Downloads, id: &str) -> Result<InstallState> {
-        let mut state = self.state();
-        ensure!(
-            state.id == id && state.stage == "checking",
-            "安装检查状态已变化"
-        );
-        let result = (|| {
-            let task = downloads.verify_saved()?;
-            ensure!(task.stage == "ready", "下载文件未通过 SHA256 校验");
-            let arch = match task.asset_name.as_str() {
-                "Claude-win-x64.msix" => "x64",
-                "Claude-win-arm64.msix" => "arm64",
-                _ => anyhow::bail!("仅支持 Windows MSIX，其他平台安装包只能保存"),
-            };
-            let path = task.path.as_ref().context("安装包路径缺失")?;
-            let _guard = lock_package(path)?;
+        #[cfg(target_os = "macos")]
+        return self.prepare_macos(downloads, id);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut state = self.state();
             ensure!(
-                downloads.verify_saved()?.stage == "ready",
-                "锁定后安装包完整性校验失败"
+                state.id == id && state.stage == "checking",
+                "安装检查状态已变化"
             );
-            let info = inspect_package(path)?;
-            let mut env = environment()?;
-            // 检查包时允许客户端运行，真正安装前仍必须退出。
-            env.running = false;
-            validate_package(&info, &task.version, arch, &env)?;
-            self.check_standard_versions(&info.version)?;
-            state.task_id = task.id;
-            state.info = Some(info);
-            state.stage = "ready".into();
-            state.message =
-                "下载完整性、Windows 签名、包身份和本机环境检查通过。请确认后打开系统安装器。"
-                    .into();
-            Ok::<(), anyhow::Error>(())
-        })();
-        if let Err(error) = result {
-            state.stage = "failed".into();
-            state.message = format!("{error:#}");
+            let result = (|| {
+                let task = downloads.verify_saved()?;
+                ensure!(task.stage == "ready", "下载文件未通过 SHA256 校验");
+                let arch = match task.asset_name.as_str() {
+                    "Claude-win-x64.msix" => "x64",
+                    "Claude-win-arm64.msix" => "arm64",
+                    _ => anyhow::bail!("仅支持 Windows MSIX，其他平台安装包只能保存"),
+                };
+                let path = task.path.as_ref().context("安装包路径缺失")?;
+                let _guard = lock_package(path)?;
+                ensure!(
+                    downloads.verify_saved()?.stage == "ready",
+                    "锁定后安装包完整性校验失败"
+                );
+                let info = inspect_package(path)?;
+                let mut env = environment()?;
+                // 检查包时允许客户端运行，真正安装前仍必须退出。
+                env.running = false;
+                validate_package(&info, &task.version, arch, &env)?;
+                self.check_standard_versions(&info.version)?;
+                state.task_id = task.id;
+                state.info = Some(info);
+                state.stage = "ready".into();
+                state.message =
+                    "下载完整性、Windows 签名、包身份和本机环境检查通过。请确认后打开系统安装器。"
+                        .into();
+                Ok::<(), anyhow::Error>(())
+            })();
+            if let Err(error) = result {
+                state.stage = "failed".into();
+                state.message = format!("{error:#}");
+            }
+            state.checked_at = now();
+            self.set(state)
         }
-        state.checked_at = now();
-        self.set(state)
     }
     pub fn launch(
         &self,
@@ -289,106 +314,117 @@ impl Installer {
         id: &str,
         force_exit: bool,
     ) -> Result<InstallState> {
-        let mut state = self.state();
-        ensure!(
-            state.id == id && state.stage == "ready",
-            "请先完成安装前检查"
-        );
-        state.stage = "launching".into();
-        self.set(state.clone())?;
-        let result = (|| {
-            let task = downloads.verify_saved()?;
+        #[cfg(target_os = "macos")]
+        return self.launch_macos(downloads, id, force_exit);
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut state = self.state();
             ensure!(
-                task.id == state.task_id && task.stage == "ready",
-                "下载任务已变化，请重新检查安装包"
+                state.id == id && state.stage == "ready",
+                "请先完成安装前检查"
             );
-            let path = task.path.as_ref().context("安装包路径丢失")?;
-            let _guard = lock_package(path)?;
-            ensure!(
-                downloads.verify_saved()?.stage == "ready",
-                "锁定后安装包完整性校验失败"
-            );
-            let info = inspect_package(path)?;
-            let mut env = environment()?;
-            let was_running = env.running;
-            env.running = false;
-            let expected = state.info.as_ref().context("没有安装包信息")?;
-            validate_package(&info, &task.version, &expected.architecture, &env)?;
-            self.check_standard_versions(&info.version)?;
-            ensure!(
-                info.name == expected.name && info.version == expected.version,
-                "确认后安装包信息发生变化"
-            );
-            if installation_confirmed(&info, &env) {
-                state.stage = "installed".into();
-                state.needs_rebuild = self.root.join("managed").exists();
-                state.message = "本机已注册该版本或更高版本，无需重复安装。".into();
-                return Ok(());
-            }
-            ensure!(
-                !was_running || force_exit,
-                "Claude 正在运行，请确认强制退出后继续安装"
-            );
-            if force_exit {
-                // 仅在本次安装明确授权且包重新验证通过后关闭 Claude。
-                force_exit_claude()?;
-            }
-            let final_env = environment()?;
-            validate_package(&info, &task.version, &expected.architecture, &final_env)?;
-            // ShellExecute 通过文件关联交给 Windows 应用安装程序，不拼接文件路径。
-            probe::<bool>(r#"[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference='Stop';try {Start-Process -FilePath $env:CLAUDE_CN_PROBE_PATH -ErrorAction Stop;@{ok=$true;data=$true}|ConvertTo-Json -Compress}catch{@{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress}"#,Some(path)).context("无法打开 Windows 应用安装程序，请检查 MSIX 文件关联或安装策略")?;
-            state.stage = "awaitingInstaller".into();
-            state.started_at = now();
-            state.message="系统安装器已打开，请在系统窗口完成安装。助手将重新检测包版本，打开安装器本身不算安装成功。".into();
-            Ok::<(), anyhow::Error>(())
-        })();
-        if let Err(error) = result {
-            state.stage = "failed".into();
-            state.message = format!("{error:#}");
-        }
-        state.checked_at = now();
-        self.set(state)
-    }
-    pub fn recheck(&self) -> Result<InstallState> {
-        let mut state = self.state();
-        ensure!(
-            matches!(
-                state.stage.as_str(),
-                "awaitingInstaller" | "interrupted" | "unconfirmed" | "stopped"
-            ),
-            "当前没有待确认的安装结果"
-        );
-        let info = state
-            .info
-            .as_ref()
-            .context("没有安装包信息，请重新执行安装前检查")?;
-        match environment() {
-            Ok(env) => {
-                if installation_confirmed(info, &env) {
+            state.stage = "launching".into();
+            self.set(state.clone())?;
+            let result = (|| {
+                let task = downloads.verify_saved()?;
+                ensure!(
+                    task.id == state.task_id && task.stage == "ready",
+                    "下载任务已变化，请重新检查安装包"
+                );
+                let path = task.path.as_ref().context("安装包路径丢失")?;
+                let _guard = lock_package(path)?;
+                ensure!(
+                    downloads.verify_saved()?.stage == "ready",
+                    "锁定后安装包完整性校验失败"
+                );
+                let info = inspect_package(path)?;
+                let mut env = environment()?;
+                let was_running = env.running;
+                env.running = false;
+                let expected = state.info.as_ref().context("没有安装包信息")?;
+                validate_package(&info, &task.version, &expected.architecture, &env)?;
+                self.check_standard_versions(&info.version)?;
+                ensure!(
+                    info.name == expected.name && info.version == expected.version,
+                    "确认后安装包信息发生变化"
+                );
+                if installation_confirmed(&info, &env) {
                     state.stage = "installed".into();
                     state.needs_rebuild = self.root.join("managed").exists();
-                    state.message=if state.needs_rebuild{"已检测到目标版本或更高版本。已有受管副本需要重新校验并重建；当前不会自动执行汉化。"}else{"已检测到目标版本或更高版本，安装结果已确认。"}.into();
-                } else if state.stage == "awaitingInstaller"
-                    && now().saturating_sub(state.started_at) < 600
-                {
-                    state.message="尚未检测到目标版本，请继续完成系统安装。若系统提示失败，请按系统说明处理；关闭安装窗口不代表成功。".into();
-                } else {
-                    state.stage = "unconfirmed".into();
-                    state.message="未确认安装成功。可能尚未完成、已取消或安装失败；请检查系统安装器后重新检测。".into();
+                    state.message = "本机已注册该版本或更高版本，无需重复安装。".into();
+                    return Ok(());
                 }
-            }
-            Err(error) => {
-                if state.stage == "awaitingInstaller"
-                    && now().saturating_sub(state.started_at) >= 600
-                {
-                    state.stage = "unconfirmed".into();
+                ensure!(
+                    !was_running || force_exit,
+                    "Claude 正在运行，请确认强制退出后继续安装"
+                );
+                if force_exit {
+                    // 仅在本次安装明确授权且包重新验证通过后关闭 Claude。
+                    force_exit_claude()?;
                 }
-                state.message = format!("暂时无法检测安装结果：{error:#}。可以稍后重新检测。");
+                let final_env = environment()?;
+                validate_package(&info, &task.version, &expected.architecture, &final_env)?;
+                // ShellExecute 通过文件关联交给 Windows 应用安装程序，不拼接文件路径。
+                probe::<bool>(r#"[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference='Stop';try {Start-Process -FilePath $env:CLAUDE_CN_PROBE_PATH -ErrorAction Stop;@{ok=$true;data=$true}|ConvertTo-Json -Compress}catch{@{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress}"#,Some(path)).context("无法打开 Windows 应用安装程序，请检查 MSIX 文件关联或安装策略")?;
+                state.stage = "awaitingInstaller".into();
+                state.started_at = now();
+                state.message="系统安装器已打开，请在系统窗口完成安装。助手将重新检测包版本，打开安装器本身不算安装成功。".into();
+                Ok::<(), anyhow::Error>(())
+            })();
+            if let Err(error) = result {
+                state.stage = "failed".into();
+                state.message = format!("{error:#}");
             }
+            state.checked_at = now();
+            self.set(state)
         }
-        state.checked_at = now();
-        self.set(state)
     }
+    pub fn recheck(&self) -> Result<InstallState> {
+        #[cfg(target_os = "macos")]
+        return self.recheck_macos();
+        #[cfg(not(target_os = "macos"))]
+        {
+            let mut state = self.state();
+            ensure!(
+                matches!(
+                    state.stage.as_str(),
+                    "awaitingInstaller" | "interrupted" | "unconfirmed" | "stopped"
+                ),
+                "当前没有待确认的安装结果"
+            );
+            let info = state
+                .info
+                .as_ref()
+                .context("没有安装包信息，请重新执行安装前检查")?;
+            match environment() {
+                Ok(env) => {
+                    if installation_confirmed(info, &env) {
+                        state.stage = "installed".into();
+                        state.needs_rebuild = self.root.join("managed").exists();
+                        state.message=if state.needs_rebuild{"已检测到目标版本或更高版本。已有受管副本需要重新校验并重建；当前不会自动执行汉化。"}else{"已检测到目标版本或更高版本，安装结果已确认。"}.into();
+                    } else if state.stage == "awaitingInstaller"
+                        && now().saturating_sub(state.started_at) < 600
+                    {
+                        state.message="尚未检测到目标版本，请继续完成系统安装。若系统提示失败，请按系统说明处理；关闭安装窗口不代表成功。".into();
+                    } else {
+                        state.stage = "unconfirmed".into();
+                        state.message="未确认安装成功。可能尚未完成、已取消或安装失败；请检查系统安装器后重新检测。".into();
+                    }
+                }
+                Err(error) => {
+                    if state.stage == "awaitingInstaller"
+                        && now().saturating_sub(state.started_at) >= 600
+                    {
+                        state.stage = "unconfirmed".into();
+                    }
+                    state.message = format!("暂时无法检测安装结果：{error:#}。可以稍后重新检测。");
+                }
+            }
+            state.checked_at = now();
+            self.set(state)
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
     fn check_standard_versions(&self, expected: &str) -> Result<()> {
         let snapshot = crate::snapshot(&self.root)?;
         for installation in snapshot
@@ -417,6 +453,7 @@ impl Installer {
         self.set(state)
     }
 }
+#[cfg(not(target_os = "macos"))]
 fn lock_package(path: &Path) -> Result<fs::File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -429,5 +466,7 @@ fn lock_package(path: &Path) -> Result<fs::File> {
         .open(path)
         .context("无法锁定安装包，文件可能正被修改或已移走")
 }
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod macos;
 #[cfg(test)]
 mod tests;
