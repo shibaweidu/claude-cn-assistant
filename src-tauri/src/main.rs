@@ -371,6 +371,7 @@ fn open_project_link(kind: String) -> Result<(), String> {
     let url = match kind.as_str() {
         "release" => "https://github.com/Wangnov/claude-app-mirror/releases/latest",
         "source" => "https://github.com/Wangnov/claude-app-mirror",
+        "kaola" => "https://www.appkaola.com",
         _ => return Err("链接不在允许列表中".into()),
     };
     #[cfg(target_os = "macos")]
