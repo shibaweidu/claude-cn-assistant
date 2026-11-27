@@ -10,6 +10,7 @@ export interface DownloadTask {id:string;stage:string;assetName:string;version:s
 export interface DownloadState {channel:{accelerated:boolean;repository:string};release:Release|null;task:DownloadTask|null;lastError:string|null;retryAt:number;stale:boolean}
 export interface PackageInfo {name:string;publisher:string;version:string;architecture:string;signatureStatus:string;signerMatches:boolean}
 export interface InstallState {id:string;stage:string;taskId:string;info:PackageInfo|null;message:string;startedAt:number;checkedAt:number;needsRebuild:boolean}
+export interface RuntimeState {managedRunning:boolean;originalRunning:boolean;unknownRunning:boolean}
 export interface LocalState {stage:string;message:string;copied:number;total:number;sourceVersion:string;sourcePath:string|null;managedExe:string|null;backup:string|null;patchVersion:number}
 export interface BackupEntry {id:string;version:string;valid:boolean;message:string;bytes:number;modified:number;kind:string}
 export interface RecoveryState {entries:BackupEntry[];pending:boolean;transactionMessage:string;currentValid:boolean;currentMessage:string}
@@ -33,6 +34,7 @@ export const bridge = {
   launchInstall:(installId:string)=>invoke<InstallState>('launch_install',{installId}),
   recheckInstall:()=>invoke<InstallState>('recheck_install'),
   stopInstall:()=>invoke<InstallState>('stop_install_wait'),
+  localizationRuntime:()=>invoke<RuntimeState>('get_localization_runtime'),
   localization:()=>invoke<LocalState>('get_localization_state'),
   prepareLocalized:()=>invoke<LocalState>('prepare_localized_copy'),
   cancelLocalized:()=>invoke<void>('cancel_localization'),

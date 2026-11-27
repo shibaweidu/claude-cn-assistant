@@ -98,6 +98,15 @@ async fn archive_localization_entry(
     .map_err(err)?
 }
 #[tauri::command]
+async fn get_localization_runtime(
+    localizer: tauri::State<'_, Arc<Localizer>>,
+) -> Result<assistant_core::localization::RuntimeState, String> {
+    let service = Arc::clone(localizer.inner());
+    tauri::async_runtime::spawn_blocking(move || service.runtime_state().map_err(err))
+        .await
+        .map_err(err)?
+}
+#[tauri::command]
 fn get_localization_state(localizer: tauri::State<'_, Arc<Localizer>>) -> LocalState {
     localizer.state()
 }
@@ -388,6 +397,7 @@ fn main() {
             recheck_install,
             stop_install_wait,
             get_localization_state,
+            get_localization_runtime,
             prepare_localized_copy,
             cancel_localization,
             launch_localized_copy,

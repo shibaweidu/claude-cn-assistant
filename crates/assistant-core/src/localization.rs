@@ -66,6 +66,33 @@ impl LocalState {
         )
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeState {
+    pub managed_running: bool,
+    pub original_running: bool,
+    pub unknown_running: bool,
+}
+fn classify_processes(paths: &[String], managed: &Path) -> RuntimeState {
+    let normalize = |value: &str| {
+        value
+            .replace('/', "\\")
+            .trim_start_matches("\\\\?\\")
+            .to_lowercase()
+    };
+    let expected = normalize(&managed.to_string_lossy());
+    let mut state = RuntimeState::default();
+    for path in paths {
+        if path.is_empty() {
+            state.unknown_running = true;
+        } else if normalize(path) == expected {
+            state.managed_running = true;
+        } else {
+            state.original_running = true;
+        }
+    }
+    state
+}
 pub struct Localizer {
     root: PathBuf,
     state: Mutex<LocalState>,
@@ -171,6 +198,26 @@ pub fn probe_local_resources() -> Result<()> {
     Ok(())
 }
 impl Localizer {
+    pub fn runtime_state(&self) -> Result<RuntimeState> {
+        let output = crate::powershell(
+            r#"
+$ErrorActionPreference = 'Stop'
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+$paths = @(Get-Process -ErrorAction Stop | Where-Object { $_.ProcessName -eq 'Claude' } | ForEach-Object {
+    try { if ($_.Path) { [string]$_.Path } else { '' } } catch { '' }
+})
+ConvertTo-Json -InputObject $paths -Compress
+"#,
+            None,
+        )?;
+        let paths: Vec<String> =
+            serde_json::from_str(output.trim()).context("无法读取 Claude 运行状态")?;
+        Ok(classify_processes(
+            &paths,
+            &self.root.join("managed/Claude.exe"),
+        ))
+    }
+
     pub fn new(root: PathBuf) -> Result<Self> {
         fs::create_dir_all(&root)?;
         let mut state = fs::read(root.join("localization-state.json"))
@@ -464,5 +511,32 @@ mod tests {
         for (_, bytes) in CATALOGS {
             serde_json::from_slice::<serde_json::Value>(bytes).unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::*;
+    #[test]
+    fn distinguishes_managed_original_and_unreadable_processes() {
+        let managed = Path::new(r"C:\Data\managed\Claude.exe");
+        assert_eq!(classify_processes(&[], managed), RuntimeState::default());
+        let paths = vec![
+            "c:/data/managed/CLAUDE.exe".into(),
+            r"C:\Other\Claude.exe".into(),
+            String::new(),
+        ];
+        assert_eq!(
+            classify_processes(&paths, managed),
+            RuntimeState {
+                managed_running: true,
+                original_running: true,
+                unknown_running: true
+            }
+        );
+        assert!(
+            !classify_processes(&[r"C:\Data\managed-old\Claude.exe".into()], managed)
+                .managed_running
+        );
     }
 }
