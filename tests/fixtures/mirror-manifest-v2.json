@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-21T21:23:07Z",
+  "updateApiBase": "https://api.anthropic.com",
+  "version": "6.28899.6",
+  "sources": {
+    "macos": {
+      "universal": {
+        "platform": "darwin",
+        "arch": "universal",
+        "format": "dmg",
+        "redirect": "https://api.anthropic.com/api/desktop/darwin/universal/dmg/latest/redirect",
+        "version": "6.28899.6",
+        "url": "https://downloads.claude.ai/releases/darwin/universal/6.28899.6/Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.dmg",
+        "fileName": "Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.dmg",
+        "buildHash": "2f5fc59b2d1c672dd9dced86720c50f48cca0cf9",
+        "contentLength": 402202476,
+        "etag": "\"28054a87fdb20abda4f5e2eb37e874d5\"",
+        "lastModified": "Fri, 20 Nov 2026 23:28:48 GMT",
+        "sha256": "a1226d5e7072a713f7eab74d06d1745fc47aa57eae3ba202a103032d1329530f",
+        "assetName": "Claude-mac-universal.dmg"
+      }
+    },
+    "windows": {
+      "x64": {
+        "platform": "win32",
+        "arch": "x64",
+        "format": "msix",
+        "redirect": "https://api.anthropic.com/api/desktop/win32/x64/msix/latest/redirect",
+        "version": "6.28899.6",
+        "url": "https://downloads.claude.ai/releases/win32/x64/6.28899.6/Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.msix",
+        "fileName": "Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.msix",
+        "buildHash": "2f5fc59b2d1c672dd9dced86720c50f48cca0cf9",
+        "contentLength": 312231751,
+        "etag": "\"fd3a56e18b0b786806bea5ca93f3aafd\"",
+        "lastModified": "Fri, 20 Nov 2026 23:28:54 GMT",
+        "sha256": "d95045a5354f2058fc380b5f1400ad3b66c841692644cb4c0c70ca3d4b6ccd5a",
+        "assetName": "Claude-win-x64.msix"
+      },
+      "arm64": {
+        "platform": "win32",
+        "arch": "arm64",
+        "format": "msix",
+        "redirect": "https://api.anthropic.com/api/desktop/win32/arm64/msix/latest/redirect",
+        "version": "6.28899.6",
+        "url": "https://downloads.claude.ai/releases/win32/arm64/6.28899.6/Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.msix",
+        "fileName": "Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.msix",
+        "buildHash": "2f5fc59b2d1c672dd9dced86720c50f48cca0cf9",
+        "contentLength": 303570982,
+        "etag": "\"e21f46cc37437f1ac2eb9eccfbd8b47f\"",
+        "lastModified": "Fri, 20 Nov 2026 23:29:00 GMT",
+        "sha256": "da56cbef97fd93aeb1da338f7820fcd281380f696fa020b86d9489232ea9d3cc",
+        "assetName": "Claude-win-arm64.msix"
+      }
+    },
+    "linux": {
+      "x64": {
+        "platform": "linux",
+        "arch": "x64",
+        "format": "deb",
+        "redirect": "https://api.anthropic.com/api/desktop/linux/x64/deb/latest/redirect",
+        "version": "6.28899.6",
+        "url": "https://downloads.claude.ai/releases/linux/x64/6.28899.6/Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.deb",
+        "fileName": "Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.deb",
+        "buildHash": "2f5fc59b2d1c672dd9dced86720c50f48cca0cf9",
+        "contentLength": 191718584,
+        "etag": "\"99bfb48adcbcfa59b64b473c11fc3042\"",
+        "lastModified": "Fri, 20 Nov 2026 23:29:05 GMT",
+        "sha256": "7e381601d86570149643d52e9b89c26575ab12fa788aa41ffdd4cca5b0638cf8",
+        "assetName": "Claude-linux-x64.deb"
+      },
+      "arm64": {
+        "platform": "linux",
+        "arch": "arm64",
+        "format": "deb",
+        "redirect": "https://api.anthropic.com/api/desktop/linux/arm64/deb/latest/redirect",
+        "version": "6.28899.6",
+        "url": "https://downloads.claude.ai/releases/linux/arm64/6.28899.6/Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.deb",
+        "fileName": "Claude-2f5fc59b2d1c672dd9dced86720c50f48cca0cf9.deb",
+        "buildHash": "2f5fc59b2d1c672dd9dced86720c50f48cca0cf9",
+        "contentLength": 184303444,
+        "etag": "\"725c996258ff9f1036876c9edc1ef054\"",
+        "lastModified": "Fri, 20 Nov 2026 23:29:03 GMT",
+        "sha256": "239c20d218456cacc656d48382fd59116325ac679aa4e476377af1456ac85715",
+        "assetName": "Claude-linux-arm64.deb"
+      }
+    }
+  }
+}
