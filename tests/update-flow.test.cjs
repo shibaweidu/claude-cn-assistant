@@ -94,3 +94,12 @@ test('macOS only offers native DMG installation and confirms user Applications d
  assert.equal(ui.canInstall({assetName:'Claude-win-x64.msix'}),false);
  assert.doesNotMatch(ui.taskView({id:'windows',assetName:'Claude-win-x64.msix',stage:'ready',downloaded:100,total:100}),/install-prepare/);
 });
+
+test('macOS confirmed universal installation updates latest status without affecting Windows tab',()=>{
+ const {DownloadUI}=load('src/download-view.ts',{'./bridge':{bridge:{}},'./install-view':{InstallUI:class{active(){return false}view(){return ''}}}});
+ const ui=new DownloadUI(()=>{},()=>{},()=>false,()=> 'macos');
+ ui.data.release={version:'6.28899.6',checkedAt:1,assets:[{platform:'macos',architecture:'universal',name:'Claude-mac-universal.dmg',size:100}]};
+ ui.install.state={stage:'installed',taskId:'mac-download',info:{version:'6.28899.6',architecture:'universal'}};
+ assert.match(ui.view('mac','x64','6.6395.0'),/已更新至最新版本/);
+ assert.doesNotMatch(ui.view('windows','x64','6.6395.0'),/已更新至最新版本/);
+});

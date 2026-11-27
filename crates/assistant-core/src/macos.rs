@@ -289,6 +289,9 @@ pub fn verify_copy(bundle: &Path) -> Result<()> {
     Ok(())
 }
 pub fn sign_copy(source: &Path, bundle: &Path) -> Result<()> {
+    let source = source.canonicalize()?;
+    let bundle_path = bundle.canonicalize()?;
+    let bundle = bundle_path.as_path();
     use std::io::Read;
     let files = tree_files(bundle)?;
     let mut loose = Vec::new();
@@ -391,5 +394,80 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, 120);
         assert!(rows[0].1.starts_with("/Users/Some One"));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn framework_links_stay_inside_bundle_and_escape_is_rejected() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("Claude.app");
+        fs::create_dir_all(bundle.join("Versions/A")).unwrap();
+        fs::write(bundle.join("Versions/A/binary"), b"test").unwrap();
+        symlink("A", bundle.join("Versions/Current")).unwrap();
+        assert_eq!(tree_files(&bundle).unwrap().len(), 1);
+        symlink(root.path(), bundle.join("escape")).unwrap();
+        assert!(tree_files(&bundle).is_err());
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn native_copy_preserves_links_and_executable_permissions_and_can_be_resigned() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("Source.app");
+        fs::create_dir_all(source.join("Contents/MacOS")).unwrap();
+        fs::create_dir_all(source.join("Contents/Resources")).unwrap();
+        let info = serde_json::json!({"CFBundleIdentifier":BUNDLE_ID,"CFBundleExecutable":"Claude","CFBundleShortVersionString":"1.0.0","CFBundlePackageType":"APPL","CFBundleName":"Claude"});
+        fs::write(
+            source.join("Contents/Info.plist"),
+            serde_json::to_vec(&info).unwrap(),
+        )
+        .unwrap();
+        run(
+            "/usr/bin/plutil",
+            &[
+                "-convert".as_ref(),
+                "xml1".as_ref(),
+                source.join("Contents/Info.plist").as_os_str(),
+            ],
+        )
+        .unwrap();
+        fs::copy("/bin/echo", source.join("Contents/MacOS/Claude")).unwrap();
+        fs::set_permissions(
+            source.join("Contents/MacOS/Claude"),
+            fs::Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fs::write(source.join("Contents/Resources/app.asar"), b"fixture").unwrap();
+        symlink("app.asar", source.join("Contents/Resources/link")).unwrap();
+        run(
+            "/usr/bin/codesign",
+            &[
+                "--force".as_ref(),
+                "--sign".as_ref(),
+                "-".as_ref(),
+                source.as_os_str(),
+            ],
+        )
+        .unwrap();
+        let copy = root.path().join("Copy.app");
+        copy_bundle(&source, &copy).unwrap();
+        assert!(fs::symlink_metadata(copy.join("Contents/Resources/link"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_ne!(
+            fs::metadata(copy.join("Contents/MacOS/Claude"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o111,
+            0
+        );
+        sign_copy(&source, &copy).unwrap();
+        verify_copy(&copy).unwrap();
+        assert!(
+            verify_original(&copy).is_err(),
+            "ad-hoc fixture must never pass original Developer ID verification"
+        );
     }
 }
