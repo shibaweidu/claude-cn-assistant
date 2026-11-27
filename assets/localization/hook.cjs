@@ -1,4 +1,4 @@
-// Claude 中文助手：仅汉化页面；不安装扩展、权限处理器或语音功能。
+// Claude Desktop 汉化助手：仅汉化页面；不安装扩展、权限处理器或语音功能。
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');

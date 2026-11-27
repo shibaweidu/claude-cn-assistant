@@ -15,7 +15,7 @@ CodexPlusPlus：https://github.com/BigPizzaV3/CodexPlusPlus ，AGPL-3.0-only。2
 
 ## 下载来源
 
-Wangnov/claude-app-mirror：https://github.com/Wangnov/claude-app-mirror 。免费开源社区镜像，非 Anthropic 官方运营。使用其 GitHub Releases，不访问尚未配置实名开源标识的托管加速端点。安装包及 Claude 商标属于各自权利人。
+Wangnov/claude-app-mirror：https://github.com/Wangnov/claude-app-mirror 。免费开源社区镜像，非 Anthropic 官方运营。使用其公益加速入口及 GitHub Releases 备用渠道；请求的 User-Agent 指向本项目真实公开仓库，按缓存间隔检查元数据并核对 SHA256。安装包及 Claude 商标属于各自权利人。
 
 ## 工程依赖
 

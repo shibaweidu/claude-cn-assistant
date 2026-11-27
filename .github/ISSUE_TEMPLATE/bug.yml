@@ -1,0 +1,36 @@
+name: 问题反馈
+description: 下载、安装、启动、汉化或恢复出现问题
+body:
+  - type: markdown
+    attributes:
+      value: 请先阅读文档站的故障排查。不要上传令牌、账号、对话或未经处理的个人路径。
+  - type: input
+    id: assistant
+    attributes:
+      label: 助手版本
+      placeholder: 例如 0.2.0-preview.1
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: 系统版本和处理器架构
+      placeholder: 例如 Windows 11 x64 / macOS 15 Apple Silicon
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Desktop 版本和安装类型
+      placeholder: 例如 6.28899.6，MSIX / Claude.app
+  - type: textarea
+    id: steps
+    attributes:
+      label: 重现步骤、预期结果和实际结果
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 错误信息或截图
+      description: 请先隐去个人路径、账号及敏感内容。

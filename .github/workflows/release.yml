@@ -1,0 +1,81 @@
+name: Preview release
+on:
+  push:
+    tags: ['v*-preview.*']
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x64
+          - runner: macos-15
+            target: aarch64-apple-darwin
+            platform: macos-apple-silicon
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            platform: macos-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: npm ci
+      - run: npm run check
+      - run: node --test tests/update-flow.test.cjs
+      - run: cargo test -p assistant-core --locked
+      - if: runner.os == 'Windows'
+        run: npm run desktop:build -- --target ${{ matrix.target }} --no-bundle
+      - if: runner.os != 'Windows'
+        run: npm run desktop:build -- --target ${{ matrix.target }} --bundles app --config '{"bundle":{"active":true}}'
+      - name: Package Windows preview
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory package
+          Copy-Item target/${{ matrix.target }}/release/claude-cn-assistant.exe package/
+          Copy-Item LICENSE,THIRD_PARTY_NOTICES.md,README.md,CHANGELOG.md package/
+          Compress-Archive -Path package/* -DestinationPath ClaudeDesktop-CN-Assistant-${{ github.ref_name }}-${{ matrix.platform }}.zip
+      - name: Package macOS preview with links and permissions
+        if: runner.os != 'Windows'
+        run: |
+          cp LICENSE THIRD_PARTY_NOTICES.md README.md CHANGELOG.md target/${{ matrix.target }}/release/bundle/macos/
+          tar -czf ClaudeDesktop-CN-Assistant-${{ github.ref_name }}-${{ matrix.platform }}.tar.gz -C target/${{ matrix.target }}/release/bundle/macos .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: preview-${{ matrix.platform }}
+          path: ClaudeDesktop-CN-Assistant-*
+          if-no-files-found: error
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: preview-*
+          merge-multiple: true
+          path: release-files
+      - name: Generate checksums and publish preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          cd release-files
+          sha256sum *.zip *.tar.gz > SHA256SUMS.txt
+          cd ..
+          gh release create "$RELEASE_TAG" release-files/* --verify-tag --prerelease --title "Claude Desktop 汉化助手 $RELEASE_TAG" --notes-file .github/RELEASE_NOTES.md
