@@ -1,6 +1,6 @@
 {
   "name": "claude-cn-assistant-ui",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "scripts": { "dev": "vite --host 127.0.0.1 --port 4173 --strictPort", "web:dev": "npm run dev", "check": "node --check app.js && tsc --noEmit", "build": "vite build", "desktop:dev": "tauri dev", "desktop:build": "tauri build" },

@@ -57,7 +57,7 @@ impl ChannelConfig {
             "请填写本助手真实仓库，不能使用镜像项目仓库冒充客户端"
         );
         Ok(format!(
-            "ClaudeCnAssistant/0.1.0 (+{}; open-source-noncommercial)",
+            "ClaudeCnAssistant/0.1.1 (+{}; open-source-noncommercial)",
             url.as_str().trim_end_matches('/')
         ))
     }
@@ -156,7 +156,7 @@ fn allowed(url: &Url) -> bool {
 }
 fn client() -> Result<Client> {
     Ok(Client::builder()
-        .user_agent("ClaudeCnAssistant/0.1.0 (GitHub release client)")
+        .user_agent("ClaudeCnAssistant/0.1.1 (GitHub release client)")
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(1800))
         .redirect(reqwest::redirect::Policy::custom(|attempt| {

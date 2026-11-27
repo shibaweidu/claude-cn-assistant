@@ -63,6 +63,7 @@ export class DownloadUI {
     const status=ordering===1?'发现新版本':ordering===0?'与本机版本一致':ordering===-1?'镜像版本早于本机':release?'镜像版本已获取':'尚未检查版本';
     const checked=release?new Date(release.checkedAt*1000).toLocaleString('zh-CN'):'—';
     return `<div class="page-heading"><div><h1>下载与更新</h1><p>原版安装包，来自你指定的社区镜像。</p></div><button class="subtle-button" data-native="release-check" ${this.checking?'disabled':''}>${this.checking?'正在查询…':'检查版本'}</button></div>
+      ${this.install.state?.stage==='failed'?`<div class="notice" role="alert">安装未能继续：${esc(this.install.state.message)}<br>请查看下方 Windows 安装详情。</div>`:''}
       ${this.error||lastError?`<div class="notice" role="alert">${esc(this.error||lastError)}${retryAt>Date.now()/1000?`<br>下次可重试：${esc(new Date(retryAt*1000).toLocaleTimeString('zh-CN'))}`:''}<br><button class="text-button" data-native="release-page">打开镜像发布页</button></div>`:''}
       <div class="notice">下载渠道：${this.data.channel.accelerated?'公益镜像加速':'GitHub Releases'} <button class="text-button" data-native="package-channel" ${active(task)||this.checking||this.working?'disabled':''}>切换到${this.data.channel.accelerated?' GitHub 备用':'公益加速'}</button></div>
       <div class="platform-tabs" role="tablist" aria-label="下载操作系统">${[['windows','Windows'],['mac','macOS'],['linux','Linux']].map(([key,label])=>`<button role="tab" aria-selected="${platform===key}" data-platform="${key}">${label}</button>`).join('')}</div>

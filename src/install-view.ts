@@ -22,6 +22,7 @@ export class InstallUI {
       else if(name==='install-launch'&&this.state)this.state=await bridge.launchInstall(this.state.id,forceExit);
       else if(name==='install-recheck')this.state=await bridge.recheckInstall();
       else if(name==='install-stop')this.state=await bridge.stopInstall();
+      if(this.state?.stage==='failed')this.notify('安装检查未通过：'+this.state.message);
       if(this.state?.stage==='installed'&&previousStage!=='installed'){this.notify('已通过 Windows 包注册信息确认安装版本');window.dispatchEvent(new Event('installation-confirmed'))}
     }catch(error){this.error=String(error)}finally{this.busy=false;this.changed()}
     if(name==='install-prepare'&&this.state?.stage==='ready')await this.confirm();

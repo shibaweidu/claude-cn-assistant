@@ -128,3 +128,23 @@ fn unverified_or_other_platform_file_cannot_be_installed() {
     assert!(state.info.is_none());
     assert!(service.launch(&downloads, &id, false).is_err());
 }
+
+#[cfg(windows)]
+#[test]
+fn signer_comparison_accepts_equivalent_x500_encodings() {
+    let result: bool = probe(r#"
+[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
+try {
+ $flags=[Security.Cryptography.X509Certificates.X500DistinguishedNameFlags]
+ $name='CN="Anthropic, PBC", O="Anthropic, PBC", C=US'
+ $a=[Security.Cryptography.X509Certificates.X500DistinguishedName]::new($name,$flags::ForceUTF8Encoding)
+ $b=[Security.Cryptography.X509Certificates.X500DistinguishedName]::new($name,$flags::None)
+ if([Convert]::ToBase64String($a.RawData) -ceq [Convert]::ToBase64String($b.RawData)){throw '测试没有产生不同编码'}
+ $equal=[string]::Equals($a.Decode($flags::None),$b.Decode($flags::None),[StringComparison]::Ordinal)
+ $other=[Security.Cryptography.X509Certificates.X500DistinguishedName]::new('CN=Other, O="Anthropic, PBC", C=US')
+ $different=-not [string]::Equals($a.Decode($flags::None),$other.Decode($flags::None),[StringComparison]::Ordinal)
+ @{ok=$true;data=($equal -and $different)}|ConvertTo-Json -Compress
+} catch {@{ok=$false;error=$_.Exception.Message}|ConvertTo-Json -Compress}
+"#, None).unwrap();
+    assert!(result);
+}

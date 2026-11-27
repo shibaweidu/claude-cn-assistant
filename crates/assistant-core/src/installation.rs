@@ -103,7 +103,8 @@ try {
  $matches=$false
  if($sig.SignerCertificate){
   $expected=[Security.Cryptography.X509Certificates.X500DistinguishedName]::new($publisher)
-  $matches=[Convert]::ToBase64String($expected.RawData) -ceq [Convert]::ToBase64String($sig.SignerCertificate.SubjectName.RawData)
+  # DER 字符串类型可能不同；比较 Windows 解码后的完整 X.500 名称。
+  $matches=[string]::Equals($expected.Decode([Security.Cryptography.X509Certificates.X500DistinguishedNameFlags]::None),$sig.SignerCertificate.SubjectName.Decode([Security.Cryptography.X509Certificates.X500DistinguishedNameFlags]::None),[StringComparison]::Ordinal)
  }
  @{ok=$true;data=@{name=$name;publisher=$publisher;version=$version;architecture=$arch;signatureStatus="$($sig.Status)";signerMatches=$matches}} | ConvertTo-Json -Depth 5 -Compress
 } catch {@{ok=$false;error=$_.Exception.Message} | ConvertTo-Json -Compress}
