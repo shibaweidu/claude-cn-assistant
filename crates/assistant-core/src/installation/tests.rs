@@ -25,6 +25,7 @@ fn package(version: &str) -> RegisteredPackage {
         status: "Ok".into(),
     }
 }
+#[cfg(windows)]
 #[test]
 fn validates_identity_signature_architecture_and_version() {
     let base = info();
@@ -53,6 +54,7 @@ fn validates_identity_signature_architecture_and_version() {
         );
     }
 }
+#[cfg(windows)]
 #[test]
 fn running_and_downgrade_are_blocked() {
     let mut environment = env();

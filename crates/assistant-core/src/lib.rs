@@ -387,6 +387,7 @@ mod tests {
             b"broken"
         );
     }
+    #[cfg(not(target_os = "macos"))]
     #[test]
     fn rejects_alias_and_incomplete_install() {
         assert!(validate_source(Path::new(

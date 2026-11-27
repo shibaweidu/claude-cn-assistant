@@ -26,6 +26,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
       - run: npm ci
       - run: npm run check
       - run: node --test tests/update-flow.test.cjs
