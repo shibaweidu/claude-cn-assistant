@@ -94,10 +94,6 @@ npm run desktop:build -- --no-bundle
 
 数据目录包含设置、下载缓存、受管副本、备份及诊断日志。恢复只切换受管副本，不回退 Claude 账号或对话。提交日志前请删除个人路径、账号及其他敏感信息。
 
-## 来源与许可证
+## 许可证
 
-- 汉化资源与部分 ASAR 处理移植自 [CodexPlusPlus](https://github.com/BigPizzaV3/CodexPlusPlus)，遵循其 AGPL 授权要求。
-- 安装包来自 [Wangnov/claude-app-mirror](https://github.com/Wangnov/claude-app-mirror)，非官方运营。请求使用指向本仓库的真实 User-Agent，按缓存间隔检查并核对 SHA256。
-- 仓库展示和文档组织参考 [javaht/claude-desktop-zh-cn](https://github.com/javaht/claude-desktop-zh-cn)，未据此宣称本项目具有其全部功能或兼容性。
-
-本项目采用 **AGPL-3.0-only**。完整授权见 [LICENSE](LICENSE)，移植来源及依赖声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。Claude 名称和商标归其权利人所有。
+[AGPL-3.0-only](LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)

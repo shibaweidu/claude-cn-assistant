@@ -20,3 +20,7 @@ Wangnov/claude-app-mirror：https://github.com/Wangnov/claude-app-mirror 。免�
 ## 工程依赖
 
 Tauri、Rust 依赖的精确版本见 Cargo.lock，前端依赖见 package-lock.json。Tauri API/CLI 采用 MIT 或 Apache-2.0；Vite、TypeScript、rfd、serde 等依赖许可证应在正式打包发布时随交付审计并保留对应声明。此文件不替代各依赖原始许可证。
+
+## 仓库展示参考
+
+仓库展示和文档组织参考 [javaht/claude-desktop-zh-cn](https://github.com/javaht/claude-desktop-zh-cn)。此项为展示参考，不表示本项目具有该项目的全部功能或兼容性，也未因此更改本项目的 AGPL-3.0-only 授权。Claude 名称和商标归其权利人所有。
